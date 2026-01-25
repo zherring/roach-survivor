@@ -1,0 +1,1845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>$ROACH Prototype</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #111;
+      color: #fff;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 { color: #0f0; margin-bottom: 10px; }
+
+    #stats {
+      display: flex;
+      gap: 30px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .stat { color: #aaa; }
+    .stat span { color: #ff0; font-weight: bold; }
+    #heal-btn {
+      background: #040;
+      border: 1px solid #0a0;
+      color: #0f0;
+      font-family: monospace;
+      font-size: 10px;
+      padding: 2px 6px;
+      cursor: pointer;
+      margin-left: 5px;
+    }
+    #heal-btn:hover { background: #060; }
+    #heal-btn:disabled { background: #222; border-color: #444; color: #666; cursor: not-allowed; }
+
+    #room-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px;
+      margin-bottom: 10px;
+    }
+    .room-cell {
+      width: 50px;
+      height: 35px;
+      background: #222;
+      border: 1px solid #444;
+      color: #666;
+      font-family: monospace;
+      font-size: 9px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.2;
+    }
+    .room-cell.active { border-color: #0f0; color: #0f0; background: #131; }
+    .room-cell.has-player { box-shadow: 0 0 5px #0ff; }
+    .room-cell .wealth-bar {
+      width: 100%;
+      height: 3px;
+      background: #333;
+      margin-top: 2px;
+    }
+    .room-cell .wealth-fill {
+      height: 100%;
+      background: #ff0;
+      transition: width 0.3s;
+    }
+    .room-cell .bot-indicator {
+      color: #a00;
+      font-size: 8px;
+    }
+
+    #game-container {
+      position: relative;
+      width: 600px;
+      height: 400px;
+      background: #000;
+      border: 2px solid #333;
+      cursor: none;
+      overflow: hidden;
+    }
+
+    /* Sprite-based roach */
+    .roach {
+      position: absolute;
+      width: 35px;
+      height: 35px;
+      background-image: url('game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 200px 200px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      /* Default: idle state */
+      background-position: -10px -20px;
+      transition: filter 0.1s, transform 0.2s ease-out;
+      transform-origin: center center;
+      z-index: 10; /* Above motel (z-index 5) */
+    }
+    /* Crawling animation frame (next frame ~50px right at this scale) */
+    .roach.crawling {
+      background-position: -60px -20px;
+    }
+    /* Hit state - bright red overlay */
+    .roach.hurt {
+      background-position: -110px -20px;
+    }
+    .roach.hurt::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #ff0000;
+      opacity: 0.85;
+      animation: hit-flash 0.4s ease-out forwards;
+      pointer-events: none;
+    }
+    @keyframes hit-flash {
+      0% { opacity: 0.95; transform: scale(1.3); }
+      30% { opacity: 0.9; }
+      100% { opacity: 0; transform: scale(1); }
+    }
+    /* Dead state */
+    .roach.dead {
+      background-position: -160px -20px;
+    }
+    /* Rich roach - golden tint */
+    .roach.rich {
+      filter: brightness(1.2) sepia(0.8) hue-rotate(10deg) saturate(2);
+    }
+    /* Player roach - cyan tint */
+    .roach.player {
+      filter: brightness(1.3) sepia(1) hue-rotate(130deg) saturate(3);
+      z-index: 20; /* Above other roaches */
+    }
+
+    /* Big pixelated red arrow pointing down at player */
+    .player-arrow {
+      position: absolute;
+      z-index: 1000; /* Always on top */
+      pointer-events: none;
+      width: 16px;
+      height: 20px;
+      image-rendering: pixelated;
+    }
+    .player-arrow::before {
+      content: '';
+      position: absolute;
+      /* Arrow shaft */
+      width: 6px;
+      height: 12px;
+      background: #ff0000;
+      left: 5px;
+      top: 0;
+      box-shadow:
+        0 0 0 1px #800000;
+    }
+    .player-arrow::after {
+      content: '';
+      position: absolute;
+      /* Arrow head - triangle using borders */
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 10px solid #ff0000;
+      left: 0;
+      top: 10px;
+      filter: drop-shadow(0 1px 0 #800000);
+    }
+    /* Player roach when rich - magenta tint */
+    .roach.player.rich {
+      filter: brightness(1.3) sepia(1) hue-rotate(250deg) saturate(3);
+    }
+
+    /* Sprite-based boot (player cursor) */
+    .boot {
+      position: absolute;
+      width: 100px;
+      height: 110px;
+      background-image: url('game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 300px 300px;
+      background-position: -27px -163px; /* Boot_Hover */
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(-80%);
+      transform-origin: 50% 80%;
+      opacity: 0;
+      z-index: 100;
+      transition: transform 0.1s ease-out;
+      /* Green tint for player boot */
+      filter: brightness(1) sepia(1) hue-rotate(70deg) saturate(2);
+    }
+    .boot.hovering {
+      opacity: 0.6;
+    }
+    .boot.stomping {
+      background-position: -177px -163px; /* Boot_Stomp (~150px right at this scale) */
+      animation: stomp 0.15s ease-out;
+    }
+    @keyframes stomp {
+      0% { opacity: 1; transform: translateX(-50%) translateY(-120%) scale(1.2); }
+      50% { opacity: 1; transform: translateX(-50%) translateY(-60%) scale(1); }
+      100% { opacity: 0.6; transform: translateX(-50%) translateY(-80%) scale(1); }
+    }
+
+    /* Sprite-based house bot (slightly smaller than player boot) */
+    .house-bot {
+      position: absolute;
+      width: 80px;
+      height: 88px;
+      background-image: url('game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 240px 240px;
+      background-position: -22px -130px; /* Boot_Hover scaled */
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      pointer-events: none;
+      z-index: 50;
+      transition: left 0.2s ease-out, top 0.2s ease-out, transform 0.15s ease-out;
+      transform-origin: center center;
+      /* Red tint for enemy bot */
+      filter: brightness(1) sepia(1) hue-rotate(-30deg) saturate(3);
+    }
+    .house-bot.stomping {
+      background-position: -142px -130px; /* Boot_Stomp scaled */
+      animation: bot-stomp 0.2s ease-out;
+    }
+    @keyframes bot-stomp {
+      0% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(15px) scale(1.1); }
+      100% { transform: translateY(0) scale(1); }
+    }
+
+    /* Splat effect - use dead roach sprite */
+    .splat {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background-image: url('game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 200px 200px;
+      background-position: -160px -20px; /* Dead sprite */
+      image-rendering: pixelated;
+      pointer-events: none;
+      filter: brightness(0.6) sepia(1) hue-rotate(60deg) saturate(2);
+      animation: splat-fade 1s ease-out forwards;
+    }
+    @keyframes splat-fade {
+      0% { transform: scale(0.5) rotate(0deg); opacity: 1; }
+      20% { transform: scale(1.2) rotate(15deg); opacity: 0.8; }
+      100% { transform: scale(1) rotate(30deg); opacity: 0; }
+    }
+
+    /* Roach Motel - banking point */
+    .roach-motel {
+      position: absolute;
+      width: 240px;
+      height: 240px;
+      background-color: #000; /* Black fallback to blend with game bg */
+      background-image: url('roach-motel-sprite.jpeg');
+      background-size: cover;
+      background-repeat: no-repeat;
+      background-position: center;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      z-index: 5; /* Behind roaches */
+    }
+    .roach-motel.hidden {
+      display: none !important;
+      visibility: hidden !important;
+    }
+    .roach-motel:not(.hidden) {
+      display: block !important;
+      visibility: visible !important;
+    }
+
+    /* Saving overlay on roach while in motel */
+    .roach.saving::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 255, 100, 0.3);
+      pointer-events: none;
+      animation: saving-pulse 0.5s ease-in-out infinite;
+    }
+    @keyframes saving-pulse {
+      0%, 100% { background: rgba(0, 255, 100, 0.3); }
+      50% { background: rgba(0, 255, 100, 0.5); }
+    }
+
+    /* Saving countdown number above roach */
+    .save-countdown {
+      position: absolute;
+      font-family: monospace;
+      font-size: 24px;
+      font-weight: bold;
+      color: #0f0;
+      text-shadow: 0 0 10px #0f0, 2px 2px 0 #000;
+      pointer-events: none;
+      z-index: 500;
+      animation: countdown-pop 1s ease-out;
+    }
+    @keyframes countdown-pop {
+      0% { transform: scale(1.5); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.8; }
+    }
+
+    /* Motel timer display */
+    #motel-timer {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(0,0,0,0.9);
+      border: 2px solid #f0c040;
+      padding: 5px 10px;
+      font-size: 12px;
+      color: #f0c040;
+      font-family: monospace;
+      z-index: 300;
+    }
+    #motel-timer.active {
+      color: #0f0;
+      border-color: #0f0;
+      background: rgba(0,50,0,0.9);
+    }
+    #motel-timer .room-indicator {
+      display: block;
+      color: #ff0;
+      font-size: 14px;
+      font-weight: bold;
+      margin-top: 3px;
+    }
+    #motel-timer .room-indicator.here {
+      color: #0f0;
+      animation: blink 0.5s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    #motel-timer.paused {
+      border-color: #f00;
+      color: #f00;
+    }
+
+    /* Banked balance display */
+    #banked-display {
+      color: #f0c040;
+      font-weight: bold;
+    }
+
+    #controls {
+      margin-top: 15px;
+      color: #888;
+      font-size: 12px;
+      text-align: center;
+    }
+    #controls kbd {
+      background: #333;
+      padding: 2px 6px;
+      color: #fff;
+    }
+
+    #game-controls {
+      display: flex;
+      gap: 20px;
+      margin-top: 15px;
+      padding: 10px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #888;
+    }
+    .control-row label {
+      min-width: 120px;
+    }
+    .control-row button {
+      width: 24px;
+      height: 24px;
+      background: #333;
+      border: 1px solid #555;
+      color: #fff;
+      font-family: monospace;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .control-row button:hover {
+      background: #444;
+    }
+    .control-row span {
+      min-width: 30px;
+      text-align: center;
+      color: #fff;
+    }
+
+    #log {
+      margin-top: 15px;
+      width: 600px;
+      height: 80px;
+      overflow-y: auto;
+      background: #0a0a0a;
+      border: 1px solid #333;
+      padding: 10px;
+      font-size: 11px;
+      color: #666;
+    }
+    #log .kill { color: #0f0; }
+    #log .death { color: #f00; }
+    #log .money { color: #ff0; }
+  </style>
+</head>
+<body>
+  <h1>$ROACH PROTOTYPE</h1>
+
+  <div id="stats">
+    <div class="stat">$ROACH: <span id="balance">0.00</span></div>
+    <div class="stat" id="banked-display">BANKED: <span id="banked">0.00</span></div>
+    <div class="stat">HP: <span id="player-hp">3</span>/3 <button id="heal-btn" onclick="healRoach()">Heal ($1)</button></div>
+    <div class="stat">Alive: <span id="alive-time">0s</span></div>
+    <div class="stat">Kills: <span id="kills">0</span></div>
+    <div class="stat">Room: <span id="current-room">0,0</span></div>
+    <div class="stat">Stompers here: <span id="stompers">1</span></div>
+  </div>
+
+  <div id="room-grid">
+    <div class="room-cell" data-room="0,0">0,0 <span class="bot-indicator"></span><br><div class="wealth-bar"><div class="wealth-fill"></div></div></div>
+    <div class="room-cell" data-room="1,0">1,0 <span class="bot-indicator"></span><br><div class="wealth-bar"><div class="wealth-fill"></div></div></div>
+    <div class="room-cell" data-room="0,1">0,1 <span class="bot-indicator"></span><br><div class="wealth-bar"><div class="wealth-fill"></div></div></div>
+    <div class="room-cell" data-room="1,1">1,1 <span class="bot-indicator"></span><br><div class="wealth-bar"><div class="wealth-fill"></div></div></div>
+  </div>
+
+  <div id="game-container">
+    <div id="boot" class="boot"></div>
+    <div id="roach-motel" class="roach-motel hidden"></div>
+    <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
+    <div id="player-arrow" class="player-arrow"></div>
+  </div>
+
+  <div id="controls">
+    <kbd>Click</kbd> to stomp | <kbd>WASD</kbd> to steer your roach (cyan) off edges to change rooms | Enter <span style="color:#f0c040">ROACH MOTEL</span> to bank your $ROACH!
+  </div>
+
+  <div id="game-controls">
+    <div class="control-row">
+      <label>House Bots:</label>
+      <button onclick="removeBot()">-</button>
+      <span id="bot-count">1</span>
+      <button onclick="addBot()">+</button>
+    </div>
+    <div class="control-row">
+      <label>Gray Roaches:</label>
+      <button onclick="removeGrayRoach()">-</button>
+      <span id="gray-count">0</span>
+      <button onclick="addGrayRoach()">+</button>
+    </div>
+    <div class="control-row">
+      <label>Yellow Roaches ($10+):</label>
+      <button onclick="removeYellowRoach()">-</button>
+      <span id="yellow-count">0</span>
+      <button onclick="addYellowRoach()">+</button>
+    </div>
+    <div class="control-row">
+      <label>Motel Size:</label>
+      <button onclick="resizeMotel(-20)">-</button>
+      <span id="motel-size">240</span>
+      <button onclick="resizeMotel(20)">+</button>
+    </div>
+    <div class="control-row">
+      <label>Motel:</label>
+      <button onclick="toggleMotelPause()" id="pause-btn">Pause</button>
+      <button onclick="forceSpawnMotel()">Spawn Now</button>
+      <button onclick="forceSpawnMotelHere()">Spawn Here</button>
+    </div>
+    <div class="control-row">
+      <label>Game Speed:</label>
+      <button onclick="adjustSpeed(-0.1)">-</button>
+      <span id="speed-display">1.0x</span>
+      <button onclick="adjustSpeed(0.1)">+</button>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    // Game state
+    const state = {
+      balance: 0,
+      bankedBalance: 0, // Safely banked $ROACH
+      aliveTime: 0,
+      kills: 0,
+      currentRoom: '0,0',
+      rooms: {
+        '0,0': { roaches: [], deaths: 0, houseBots: [] },
+        '1,0': { roaches: [], deaths: 0, houseBots: [] },
+        '0,1': { roaches: [], deaths: 0, houseBots: [] },
+        '1,1': { roaches: [], deaths: 0, houseBots: [] },
+      },
+      playerRoach: null,
+      lastStomp: 0,
+      stompCooldown: 200, // ms between stomps
+      // Roach Motel state
+      motel: {
+        room: null,          // Current room where motel is
+        x: 0,
+        y: 0,
+        active: false,       // Is motel currently visible
+        nextSpawnTime: 0,    // When motel will next appear
+        despawnTime: 0,      // When motel will disappear
+        spawnInterval: 15000, // 15 seconds between spawns
+        stayDuration: 10000,  // Motel stays for 10 seconds
+      }
+    };
+
+    // House Bot class - visible AI stompers
+    class HouseBot {
+      constructor(room) {
+        this.room = room;
+        this.x = Math.random() * (CONTAINER_WIDTH - BOT_WIDTH) + BOT_WIDTH/2;
+        this.y = Math.random() * (CONTAINER_HEIGHT - BOT_HEIGHT) + BOT_HEIGHT/2;
+        this.prevX = this.x;
+        this.prevY = this.y;
+        this.lastAngle = Math.random() * 30 - 15; // Slight random starting tilt
+        this.targetX = this.x;
+        this.targetY = this.y;
+        this.lastStomp = 0;
+        this.stompCooldown = 800 + Math.random() * 400; // Varied timing
+        this.target = null;
+        this.el = document.createElement('div');
+        this.el.className = 'house-bot';
+        this.render();
+      }
+
+      pickTarget() {
+        const room = state.rooms[this.room];
+        const aliveRoaches = room.roaches.filter(r => !r.isDead);
+        if (aliveRoaches.length === 0) return;
+
+        // Prefer rich roaches, but sometimes target randomly
+        let candidates = aliveRoaches.filter(r => r.balance > 0.5);
+        if (candidates.length === 0 || Math.random() < 0.3) {
+          candidates = aliveRoaches;
+        }
+        this.target = candidates[Math.floor(Math.random() * candidates.length)];
+      }
+
+      update() {
+        const now = Date.now();
+
+        // Pick new target occasionally, or if current target is dead
+        if (!this.target || this.target.isDead || Math.random() < 0.02) {
+          this.pickTarget();
+        }
+
+        // Move toward target
+        if (this.target) {
+          const dx = this.target.x - this.x;
+          const dy = this.target.y - this.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          // Move with some randomness
+          if (dist > 30) {
+            this.x += ((dx / dist) * 2 + (Math.random() - 0.5) * 1) * gameSpeed;
+            this.y += ((dy / dist) * 2 + (Math.random() - 0.5) * 1) * gameSpeed;
+          }
+
+          // Try to stomp when close
+          if (dist < 40 && now - this.lastStomp > this.stompCooldown) {
+            this.stomp();
+          }
+        } else {
+          // Wander randomly
+          this.x += (Math.random() - 0.5) * 3 * gameSpeed;
+          this.y += (Math.random() - 0.5) * 3 * gameSpeed;
+        }
+
+        // Keep in bounds
+        this.x = Math.max(BOT_WIDTH/2, Math.min(CONTAINER_WIDTH - BOT_WIDTH/2, this.x));
+        this.y = Math.max(BOT_HEIGHT/2, Math.min(CONTAINER_HEIGHT - BOT_HEIGHT/2, this.y));
+
+        this.render();
+      }
+
+      stomp() {
+        this.lastStomp = Date.now();
+        this.el.classList.remove('stomping');
+        void this.el.offsetWidth;
+        this.el.classList.add('stomping');
+
+        const room = state.rooms[this.room];
+        // House bot hitbox matches visual sprite (80x88, centered on bot position)
+        const botHitW = BOT_WIDTH * 0.7;  // Slightly smaller for fairness
+        const botHitH = BOT_HEIGHT * 0.7;
+
+        for (let i = room.roaches.length - 1; i >= 0; i--) {
+          const roach = room.roaches[i];
+          if (roach.isDead) continue; // Skip dead roaches
+
+          // Check rectangular collision
+          const roachCenterX = roach.x + ROACH_WIDTH / 2;
+          const roachCenterY = roach.y + ROACH_HEIGHT / 2;
+          const inX = roachCenterX >= this.x - botHitW/2 && roachCenterX <= this.x + botHitW/2;
+          const inY = roachCenterY >= this.y - botHitH/2 && roachCenterY <= this.y + botHitH/2;
+
+          if (inX && inY) {
+            const killed = roach.hit();
+
+            if (killed) {
+              room.deaths++;
+
+              if (roach === state.playerRoach) {
+                // Player died to house bot!
+                playerDeath();
+                log(`<span class="death">HOUSE BOT killed your roach!</span>`);
+              } else {
+                log(`<span style="color:#a00">House bot killed a roach</span>`);
+                // Show dead sprite, then remove after delay
+                roach.die(() => {
+                  // Splat effect appears when roach is removed
+                  const splat = document.createElement('div');
+                  splat.className = 'splat';
+                  splat.style.left = (roach.x - 20) + 'px';
+                  splat.style.top = (roach.y - 20) + 'px';
+                  container.appendChild(splat);
+                  setTimeout(() => splat.remove(), 1000);
+
+                  // Remove from array
+                  const idx = room.roaches.indexOf(roach);
+                  if (idx > -1) room.roaches.splice(idx, 1);
+
+                  // Schedule respawn
+                  scheduleRespawn(this.room);
+                });
+              }
+              updateUI();
+            } else if (roach === state.playerRoach) {
+              log(`<span class="death">House bot hit you! (${state.playerRoach.hp}/3 HP)</span>`);
+            }
+
+            // Only hit one roach per stomp
+            break;
+          }
+        }
+
+        // Scatter nearby roaches
+        for (const roach of room.roaches) {
+          if (roach.isDead) continue;
+          const roachCenterX = roach.x + ROACH_WIDTH / 2;
+          const roachCenterY = roach.y + ROACH_HEIGHT / 2;
+          const dx = roachCenterX - this.x;
+          const dy = roachCenterY - this.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 80 && dist > 30) {
+            roach.scatter(this.x, this.y);
+          }
+        }
+      }
+
+      render() {
+        this.el.style.left = (this.x - BOT_WIDTH/2) + 'px';
+        this.el.style.top = (this.y - BOT_HEIGHT/2) + 'px';
+
+        // Calculate tilt based on movement direction
+        const dx = this.x - this.prevX;
+        const dy = this.y - this.prevY;
+        const speed = Math.sqrt(dx * dx + dy * dy);
+
+        if (speed > 0.5) {
+          // Tilt in direction of movement (max ~20 degrees)
+          const tiltX = Math.max(-20, Math.min(20, dx * 8));
+          this.lastAngle = tiltX;
+        }
+
+        this.el.style.transform = `rotate(${this.lastAngle}deg)`;
+
+        // Store previous position for next frame
+        this.prevX = this.x;
+        this.prevY = this.y;
+      }
+
+      remove() {
+        this.el.remove();
+      }
+    }
+
+    // Calculate total wealth in a room
+    function getRoomWealth(roomKey) {
+      const room = state.rooms[roomKey];
+      let total = 0;
+      for (const roach of room.roaches) {
+        total += roach.balance;
+      }
+      return total;
+    }
+
+    // Get target house bot count based on room wealth
+    function getTargetBotCount(roomKey) {
+      const wealth = getRoomWealth(roomKey);
+      // Formula: 1 bot per $10 of total wealth, minimum 0, maximum 5
+      // This creates a natural balance - rich rooms attract more danger
+      const baseBots = Math.floor(wealth / 10);
+      return Math.min(Math.max(baseBots, 0), 5);
+    }
+
+    // Dynamically adjust house bots in a room based on wealth
+    function adjustRoomBots(roomKey) {
+      const room = state.rooms[roomKey];
+      const targetCount = getTargetBotCount(roomKey);
+      const currentCount = room.houseBots.length;
+
+      if (currentCount < targetCount) {
+        // Spawn new bot
+        const bot = new HouseBot(roomKey);
+        room.houseBots.push(bot);
+        if (roomKey === state.currentRoom) {
+          container.appendChild(bot.el);
+        }
+      } else if (currentCount > targetCount) {
+        // Remove a bot (they leave when wealth decreases)
+        const bot = room.houseBots.pop();
+        bot.remove();
+      }
+    }
+
+    // Adjust all rooms periodically
+    function adjustAllRoomBots() {
+      for (const roomKey of Object.keys(state.rooms)) {
+        adjustRoomBots(roomKey);
+      }
+    }
+
+    // ==================== ROACH MOTEL SYSTEM ====================
+    const motelEl = document.getElementById('roach-motel');
+    const timerCountdown = document.getElementById('timer-countdown');
+    const timerRoom = document.getElementById('timer-room');
+    const timerEl = document.getElementById('motel-timer');
+
+    let firstMotelSpawn = true;
+    let motelPaused = false;
+    let currentMotelSize = 240;
+    let gameSpeed = 1.0; // Speed multiplier
+
+    // Saving state
+    let savingProgress = 0; // 0-5 seconds
+    let savingCountdownEl = null;
+    const SAVE_TIME_REQUIRED = 5; // seconds to stay in motel
+
+    function spawnMotel() {
+      // Pick a random room (first spawn in player's room for visibility)
+      let randomRoom;
+      if (firstMotelSpawn) {
+        randomRoom = state.currentRoom;
+        firstMotelSpawn = false;
+      } else {
+        const roomKeys = Object.keys(state.rooms);
+        randomRoom = roomKeys[Math.floor(Math.random() * roomKeys.length)];
+      }
+
+      state.motel.room = randomRoom;
+      state.motel.x = 150 + Math.random() * 300; // Keep away from edges
+      state.motel.y = 100 + Math.random() * 180;
+      state.motel.active = true;
+      state.motel.despawnTime = Date.now() + state.motel.stayDuration;
+
+      console.log('Motel spawned at', randomRoom, state.motel.x, state.motel.y);
+
+      // Show motel if in current room
+      if (randomRoom === state.currentRoom) {
+        motelEl.classList.remove('hidden');
+        motelEl.style.left = state.motel.x + 'px';
+        motelEl.style.top = state.motel.y + 'px';
+        console.log('Motel visible!', motelEl);
+      }
+
+      log(`<span style="color:#f0c040">ROACH MOTEL appeared in room ${randomRoom}!</span>`);
+    }
+
+    function despawnMotel() {
+      state.motel.active = false;
+      state.motel.room = null;
+      motelEl.classList.add('hidden');
+      state.motel.nextSpawnTime = Date.now() + state.motel.spawnInterval;
+    }
+
+    function bankBalance() {
+      if (state.balance > 0) {
+        const banked = state.balance;
+        state.bankedBalance += banked;
+        state.balance = 0;
+        if (state.playerRoach) {
+          state.playerRoach.balance = 0;
+          state.playerRoach.updateAppearance();
+        }
+        log(`<span style="color:#f0c040">BANKED $${banked.toFixed(2)}! Total: $${state.bankedBalance.toFixed(2)}</span>`);
+        despawnMotel(); // Motel disappears after banking
+        updateUI();
+      }
+    }
+
+    function checkMotelCollision() {
+      if (!state.motel.active || state.motel.room !== state.currentRoom) {
+        // Not in motel room - reset saving progress
+        if (savingProgress > 0) {
+          cancelSaving();
+        }
+        return;
+      }
+      if (!state.playerRoach || state.playerRoach.isDead) return;
+
+      // Check if player roach overlaps motel (uses currentMotelSize)
+      const px = state.playerRoach.x + ROACH_WIDTH / 2;
+      const py = state.playerRoach.y + ROACH_HEIGHT / 2;
+      const mx = state.motel.x + currentMotelSize / 2;
+      const my = state.motel.y + currentMotelSize / 2;
+
+      const dx = px - mx;
+      const dy = py - my;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      const isInsideMotel = dist < currentMotelSize / 2;
+
+      if (isInsideMotel) {
+        // Increment saving progress (called ~60 times/sec)
+        savingProgress += 1 / 60;
+
+        // Add saving class to roach
+        if (!state.playerRoach.el.classList.contains('saving')) {
+          state.playerRoach.el.classList.add('saving');
+          log('<span style="color:#0f0">Saving in progress... stay in the motel!</span>');
+        }
+
+        // Update overlay darkness based on progress
+        const progress = savingProgress / SAVE_TIME_REQUIRED;
+        const overlay = state.playerRoach.el.querySelector('.saving-overlay') || createSavingOverlay();
+        overlay.style.background = `rgba(0, 255, 100, ${0.2 + progress * 0.5})`;
+
+        // Update countdown display
+        const remaining = Math.ceil(SAVE_TIME_REQUIRED - savingProgress);
+        updateSavingCountdown(remaining);
+
+        // Check if saving complete
+        if (savingProgress >= SAVE_TIME_REQUIRED) {
+          completeSaving();
+        }
+      } else {
+        // Left the motel - reset progress
+        if (savingProgress > 0) {
+          cancelSaving();
+        }
+      }
+    }
+
+    function createSavingOverlay() {
+      const overlay = document.createElement('div');
+      overlay.className = 'saving-overlay';
+      overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+      state.playerRoach.el.appendChild(overlay);
+      return overlay;
+    }
+
+    let lastCountdownNumber = 0;
+
+    function updateSavingCountdown(seconds) {
+      if (!savingCountdownEl) {
+        savingCountdownEl = document.createElement('div');
+        savingCountdownEl.className = 'save-countdown';
+        container.appendChild(savingCountdownEl);
+      }
+
+      // Update position to follow roach
+      savingCountdownEl.style.left = (state.playerRoach.x + ROACH_WIDTH / 2 - 10) + 'px';
+      savingCountdownEl.style.top = (state.playerRoach.y - 30) + 'px';
+
+      // Only update text and animate when number changes
+      if (seconds !== lastCountdownNumber) {
+        lastCountdownNumber = seconds;
+        savingCountdownEl.textContent = seconds;
+
+        // Reset animation on number change
+        savingCountdownEl.style.animation = 'none';
+        void savingCountdownEl.offsetWidth;
+        savingCountdownEl.style.animation = 'countdown-pop 0.3s ease-out';
+      }
+    }
+
+    function cancelSaving() {
+      savingProgress = 0;
+      lastCountdownNumber = 0;
+      if (state.playerRoach) {
+        state.playerRoach.el.classList.remove('saving');
+        const overlay = state.playerRoach.el.querySelector('.saving-overlay');
+        if (overlay) overlay.remove();
+      }
+      if (savingCountdownEl) {
+        savingCountdownEl.remove();
+        savingCountdownEl = null;
+      }
+      log('<span style="color:#f80">Saving cancelled - stay in the motel!</span>');
+    }
+
+    function completeSaving() {
+      savingProgress = 0;
+      lastCountdownNumber = 0;
+      if (state.playerRoach) {
+        state.playerRoach.el.classList.remove('saving');
+        const overlay = state.playerRoach.el.querySelector('.saving-overlay');
+        if (overlay) overlay.remove();
+      }
+      if (savingCountdownEl) {
+        savingCountdownEl.remove();
+        savingCountdownEl = null;
+      }
+      bankBalance();
+    }
+
+    function updateMotelTimer() {
+      if (motelPaused) {
+        // Keep extending times while paused
+        const now = Date.now();
+        if (state.motel.active) {
+          state.motel.despawnTime = now + 1000;
+        } else {
+          state.motel.nextSpawnTime = now + 1000;
+        }
+        return;
+      }
+
+      const now = Date.now();
+
+      if (state.motel.active) {
+        // Show time until despawn
+        const remaining = Math.max(0, Math.ceil((state.motel.despawnTime - now) / 1000));
+        timerCountdown.textContent = remaining + 's';
+        timerEl.classList.add('active');
+
+        // Show room indicator prominently
+        if (state.motel.room === state.currentRoom) {
+          timerRoom.innerHTML = '>>> HERE! <<<';
+          timerRoom.classList.add('here');
+        } else {
+          timerRoom.innerHTML = 'Room: ' + state.motel.room;
+          timerRoom.classList.remove('here');
+        }
+
+        // Check for despawn
+        if (now >= state.motel.despawnTime) {
+          despawnMotel();
+          log(`<span style="color:#888">Roach Motel disappeared...</span>`);
+        }
+      } else {
+        // Show time until spawn
+        const remaining = Math.max(0, Math.ceil((state.motel.nextSpawnTime - now) / 1000));
+        timerCountdown.textContent = remaining + 's';
+        timerEl.classList.remove('active');
+        timerRoom.innerHTML = 'Spawning soon...';
+
+        // Check for spawn
+        if (now >= state.motel.nextSpawnTime) {
+          spawnMotel();
+        }
+      }
+    }
+
+    // Show/hide motel when changing rooms
+    function updateMotelVisibility() {
+      if (state.motel.active && state.motel.room === state.currentRoom) {
+        motelEl.classList.remove('hidden');
+        motelEl.style.left = state.motel.x + 'px';
+        motelEl.style.top = state.motel.y + 'px';
+      } else {
+        motelEl.classList.add('hidden');
+      }
+    }
+
+    // Initialize motel timer and size
+    state.motel.nextSpawnTime = Date.now() + 5000; // First motel in 5 seconds
+    motelEl.style.width = currentMotelSize + 'px';
+    motelEl.style.height = currentMotelSize + 'px';
+
+    const container = document.getElementById('game-container');
+    const boot = document.getElementById('boot');
+    const playerArrow = document.getElementById('player-arrow');
+    const CONTAINER_WIDTH = 600;
+    const CONTAINER_HEIGHT = 400;
+
+    // Update arrow position to follow player roach
+    function updatePlayerArrow() {
+      if (!state.playerRoach) return;
+      const roach = state.playerRoach;
+      // Position arrow above the roach center, accounting for scale
+      const scale = 1 + Math.min(roach.balance / 25, 2);
+      const arrowX = roach.x + (ROACH_WIDTH * scale) / 2 - 8;
+      const arrowY = roach.y - 25 - (scale - 1) * 10;
+      playerArrow.style.left = arrowX + 'px';
+      playerArrow.style.top = arrowY + 'px';
+      playerArrow.style.transform = `scale(${Math.max(1.5, scale)})`;
+    }
+
+    // Sprite sizes (for collision detection)
+    const ROACH_WIDTH = 35;
+    const ROACH_HEIGHT = 35;
+    const BOOT_WIDTH = 100;
+    const BOOT_HEIGHT = 110;
+    const BOT_WIDTH = 80;
+    const BOT_HEIGHT = 88;
+
+    // Roach class
+    class Roach {
+      constructor(isPlayer = false, startBalance = 0) {
+        this.x = Math.random() * (CONTAINER_WIDTH - ROACH_WIDTH) + ROACH_WIDTH/2;
+        this.y = Math.random() * (CONTAINER_HEIGHT - ROACH_HEIGHT) + ROACH_HEIGHT/2;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = (Math.random() - 0.5) * 2;
+        this.hp = 3;
+        this.balance = startBalance || (Math.random() * 2); // $ROACH this roach carries
+        this.isPlayer = isPlayer;
+        this.isHouse = !isPlayer && Math.random() < 0.3; // 30% house roaches
+        this.isDead = false;
+        this.animFrame = 0;
+        this.animTimer = 0;
+        this.lastAngle = Math.random() * 360; // Random starting direction
+        this.el = document.createElement('div');
+        this.el.className = 'roach' + (isPlayer ? ' player' : '');
+        this.updateAppearance();
+        container.appendChild(this.el);
+        this.render();
+      }
+
+      updateAppearance() {
+        this.el.classList.toggle('rich', this.balance > 1);
+        if (this.isPlayer) {
+          this.el.classList.toggle('rich', this.balance > 1);
+        }
+      }
+
+      updateAnimation() {
+        // Toggle between idle and crawl frames based on movement
+        const isMoving = Math.abs(this.vx) > 0.1 || Math.abs(this.vy) > 0.1;
+        this.animTimer++;
+        if (this.animTimer > 10) {
+          this.animTimer = 0;
+          this.animFrame = (this.animFrame + 1) % 2;
+        }
+        this.el.classList.toggle('crawling', isMoving && this.animFrame === 1);
+      }
+
+      getSpeed() {
+        // Rich roaches are slower (rubber band) but not too slow
+        const baseSpeed = this.isPlayer ? 2.5 : 3;
+        // Slower penalty scaling - big roaches can still move decently
+        const wealthPenalty = Math.min(this.balance * 0.08, 1.5);
+        return Math.max(baseSpeed - wealthPenalty, 0.8) * gameSpeed;
+      }
+
+      update() {
+        // Random steering for chaos
+        this.vx += (Math.random() - 0.5) * 0.3;
+        this.vy += (Math.random() - 0.5) * 0.3;
+
+        // Flee from player boot cursor if nearby (subtle - adds skill, not impossible)
+        if (mouseInContainer && !this.isPlayer) {
+          const dx = this.x - mouseX;
+          const dy = this.y - mouseY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 50 && dist > 0) {
+            const fleeForce = (50 - dist) / 50 * 0.3;
+            this.vx += (dx / dist) * fleeForce;
+            this.vy += (dy / dist) * fleeForce;
+          }
+        }
+
+        // Flee from house bots (slightly stronger - they're hunting)
+        if (!this.isPlayer) {
+          const room = state.rooms[state.currentRoom];
+          for (const bot of room.houseBots) {
+            const dx = this.x - bot.x;
+            const dy = this.y - bot.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 45 && dist > 0) {
+              const fleeForce = (45 - dist) / 45 * 0.35;
+              this.vx += (dx / dist) * fleeForce;
+              this.vy += (dy / dist) * fleeForce;
+            }
+          }
+        }
+
+        // Clamp velocity
+        const speed = this.getSpeed();
+        const mag = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+        if (mag > speed) {
+          this.vx = (this.vx / mag) * speed;
+          this.vy = (this.vy / mag) * speed;
+        }
+
+        // Move
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // Walls - player roach can exit to adjacent rooms, others bounce
+        if (this.isPlayer) {
+          // Check for room transitions
+          const [cx, cy] = state.currentRoom.split(',').map(Number);
+
+          if (this.x < -5) {
+            // Going left
+            if (cx > 0) {
+              transitionRoom(cx - 1, cy, 'left');
+              return;
+            } else {
+              this.x = -5;
+              this.vx *= -0.5;
+            }
+          } else if (this.x > CONTAINER_WIDTH + 5) {
+            // Going right
+            if (cx < 1) {
+              transitionRoom(cx + 1, cy, 'right');
+              return;
+            } else {
+              this.x = CONTAINER_WIDTH + 5;
+              this.vx *= -0.5;
+            }
+          }
+
+          if (this.y < -5) {
+            // Going up
+            if (cy > 0) {
+              transitionRoom(cx, cy - 1, 'up');
+              return;
+            } else {
+              this.y = -5;
+              this.vy *= -0.5;
+            }
+          } else if (this.y > CONTAINER_HEIGHT + 5) {
+            // Going down
+            if (cy < 1) {
+              transitionRoom(cx, cy + 1, 'down');
+              return;
+            } else {
+              this.y = CONTAINER_HEIGHT + 5;
+              this.vy *= -0.5;
+            }
+          }
+        } else {
+          // Non-player roaches bounce off walls
+          if (this.x < 5 || this.x > CONTAINER_WIDTH - ROACH_WIDTH - 5) {
+            this.vx *= -1;
+            this.x = Math.max(5, Math.min(CONTAINER_WIDTH - ROACH_WIDTH - 5, this.x));
+          }
+          if (this.y < 5 || this.y > CONTAINER_HEIGHT - ROACH_HEIGHT - 5) {
+            this.vy *= -1;
+            this.y = Math.max(5, Math.min(CONTAINER_HEIGHT - ROACH_HEIGHT - 5, this.y));
+          }
+        }
+
+        this.updateAnimation();
+        this.render();
+      }
+
+      render() {
+        this.el.style.left = this.x + 'px';
+        this.el.style.top = this.y + 'px';
+
+        // Scale based on wealth (1.0 at $0, up to 3.0 at $50+)
+        const wealthScale = 1 + Math.min(this.balance / 25, 2);
+
+        // Calculate rotation based on movement direction
+        // Only update rotation if moving fast enough
+        const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+        if (speed > 0.2) {
+          // atan2 gives angle in radians, convert to degrees
+          // Sprite faces up by default, so we offset by 90 degrees
+          const angle = Math.atan2(this.vy, this.vx) * (180 / Math.PI) + 90;
+          this.lastAngle = angle;
+        }
+
+        // Use last known angle (or 0 if never moved)
+        const rotation = this.lastAngle || 0;
+        this.el.style.transform = `rotate(${rotation}deg) scale(${wealthScale})`;
+      }
+
+      hit() {
+        this.hp--;
+        // Show hit sprite with red flash
+        this.el.classList.remove('hurt'); // Reset animation if already hurt
+        void this.el.offsetWidth; // Trigger reflow
+        this.el.classList.add('hurt');
+        setTimeout(() => this.el.classList.remove('hurt'), 400);
+        return this.hp <= 0;
+      }
+
+      die(callback) {
+        // Show dead sprite and stop movement
+        this.isDead = true;
+        this.vx = 0;
+        this.vy = 0;
+        this.el.classList.remove('hurt', 'crawling');
+        this.el.classList.add('dead');
+        // Keep dead sprite visible briefly before removal
+        setTimeout(() => {
+          this.remove();
+          if (callback) callback();
+        }, 500);
+      }
+
+      scatter(fromX, fromY) {
+        if (this.isDead) return; // Dead roaches don't scatter
+        const dx = this.x - fromX;
+        const dy = this.y - fromY;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        this.vx += (dx / dist) * 3;
+        this.vy += (dy / dist) * 3;
+      }
+
+      remove() {
+        this.el.remove();
+      }
+    }
+
+    // Initialize player roach
+    function initPlayerRoach() {
+      state.playerRoach = new Roach(true, 0);
+      state.rooms[state.currentRoom].roaches.push(state.playerRoach);
+      state.aliveTime = 0;
+    }
+
+    // Spawn house/enemy roaches
+    function spawnRoach(room) {
+      if (state.rooms[room].roaches.length < 15) {
+        const roach = new Roach(false, Math.random() * 3);
+        state.rooms[room].roaches.push(roach);
+        return roach;
+      }
+      return null;
+    }
+
+    // Schedule a roach respawn after death (5-10 seconds)
+    function scheduleRespawn(roomKey) {
+      const delay = 5000 + Math.random() * 5000; // 5-10 seconds
+      setTimeout(() => {
+        const roach = spawnRoach(roomKey);
+        // If spawned in current room, add to DOM
+        if (roach && roomKey === state.currentRoom) {
+          // Already added by constructor
+        } else if (roach && roomKey !== state.currentRoom) {
+          // Remove from DOM since not in current room
+          roach.el.remove();
+        }
+      }, delay);
+    }
+
+    // Stomp at position
+    function stomp(x, y) {
+      const now = Date.now();
+      if (now - state.lastStomp < state.stompCooldown) return;
+      state.lastStomp = now;
+
+      // Show boot animation
+      boot.style.left = x + 'px';
+      boot.style.top = y + 'px';
+      boot.classList.remove('stomping');
+      void boot.offsetWidth; // Trigger reflow
+      boot.classList.add('stomping');
+
+      const room = state.rooms[state.currentRoom];
+      // Boot hitbox matches the visual sprite position
+      // Boot CSS: width 100px, height 110px, transform translateX(-50%) translateY(-80%)
+      // So boot is centered horizontally and shifted up 80% of its height
+      const bootW = 100;
+      const bootH = 110;
+      const bootLeft = x - bootW / 2;        // x - 50
+      const bootRight = x + bootW / 2;       // x + 50
+      const bootTop = y - bootH * 0.8;       // y - 88
+      const bootBottom = y + bootH * 0.2;    // y + 22
+      let hitAny = false;
+
+      for (let i = room.roaches.length - 1; i >= 0; i--) {
+        const roach = room.roaches[i];
+        if (roach === state.playerRoach || roach.isDead) continue; // Can't stomp yourself or dead roaches
+
+        // Check if roach center is within the boot rectangle
+        // Roach position is top-left, so add half dimensions to get center
+        const roachCenterX = roach.x + ROACH_WIDTH / 2;
+        const roachCenterY = roach.y + ROACH_HEIGHT / 2;
+        const inX = roachCenterX >= bootLeft && roachCenterX <= bootRight;
+        const inY = roachCenterY >= bootTop && roachCenterY <= bootBottom;
+
+        if (inX && inY) {
+          hitAny = true;
+          const killed = roach.hit();
+
+          if (killed) {
+            // Kill!
+            const reward = roach.balance * 0.9;
+            state.balance += reward;
+            state.kills++;
+            room.deaths++;
+
+            log(`<span class="kill">KILLED roach!</span> <span class="money">+$${reward.toFixed(2)}</span>`);
+            updateUI();
+
+            // Show dead sprite, then remove after delay
+            const roachIndex = i;
+            const deadRoomKey = state.currentRoom; // Capture room for respawn
+            roach.die(() => {
+              // Splat effect appears when roach is removed
+              const splat = document.createElement('div');
+              splat.className = 'splat';
+              splat.style.left = (roach.x - 20) + 'px';
+              splat.style.top = (roach.y - 20) + 'px';
+              container.appendChild(splat);
+              setTimeout(() => splat.remove(), 1000);
+
+              // Remove from array
+              const idx = room.roaches.indexOf(roach);
+              if (idx > -1) room.roaches.splice(idx, 1);
+
+              // Schedule respawn
+              scheduleRespawn(deadRoomKey);
+            });
+          }
+        }
+      }
+
+      // Miss - scatter nearby roaches (larger area than boot)
+      if (!hitAny) {
+        // Boot center is at (x, y - bootH * 0.3) roughly
+        const bootCenterX = x;
+        const bootCenterY = y - bootH * 0.3;
+        for (const roach of room.roaches) {
+          if (roach.isDead) continue;
+          const dx = (roach.x + ROACH_WIDTH/2) - bootCenterX;
+          const dy = (roach.y + ROACH_HEIGHT/2) - bootCenterY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 80) {
+            roach.scatter(bootCenterX, bootCenterY);
+          }
+        }
+      }
+    }
+
+    // Player roach death
+    function playerDeath() {
+      const lost = state.balance * 0.9;
+      state.balance *= 0.1;
+      state.aliveTime = 0;
+
+      // Respawn player roach in same room
+      if (state.playerRoach) {
+        state.playerRoach.x = Math.random() * (CONTAINER_WIDTH - 20) + 10;
+        state.playerRoach.y = Math.random() * (CONTAINER_HEIGHT - 20) + 10;
+        state.playerRoach.hp = 3;
+        state.playerRoach.balance = state.balance;
+        state.playerRoach.updateAppearance();
+      }
+
+      log(`<span class="death">YOUR ROACH DIED!</span> <span class="money">Lost $${lost.toFixed(2)}</span>`);
+      updateUI();
+    }
+
+    // Initialize house bots for a room (now uses dynamic wealth-based system)
+    function initHouseBots(roomKey) {
+      // Bots are now spawned dynamically based on room wealth
+      // This just ensures the room is ready - actual spawning happens in adjustRoomBots
+      adjustRoomBots(roomKey);
+    }
+
+    // Update all house bots in current room
+    function updateHouseBots() {
+      const room = state.rooms[state.currentRoom];
+      for (const bot of room.houseBots) {
+        bot.update();
+      }
+    }
+
+    // Player controls for their roach
+    const keys = { w: false, a: false, s: false, d: false };
+    document.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = true;
+    });
+    document.addEventListener('keyup', (e) => {
+      if (e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = false;
+    });
+
+    function handlePlayerInput() {
+      if (!state.playerRoach) return;
+      const force = 0.5;
+      if (keys.w) state.playerRoach.vy -= force;
+      if (keys.s) state.playerRoach.vy += force;
+      if (keys.a) state.playerRoach.vx -= force;
+      if (keys.d) state.playerRoach.vx += force;
+    }
+
+    // Survival income - all roaches earn passively
+    function survivalIncome() {
+      const incomeRate = 0.01; // $0.01 per second per roach
+      const incomePerFrame = incomeRate / 60; // Called 60 times/sec
+
+      // Player earns for UI tracking
+      state.balance += incomePerFrame;
+      state.aliveTime += 1/60;
+
+      // All roaches in all rooms earn income
+      for (const roomKey of Object.keys(state.rooms)) {
+        for (const roach of state.rooms[roomKey].roaches) {
+          if (!roach.isDead) {
+            roach.balance += incomePerFrame;
+            roach.updateAppearance();
+          }
+        }
+      }
+
+      // Sync player roach balance with state
+      if (state.playerRoach && !state.playerRoach.isDead) {
+        state.playerRoach.balance = state.balance;
+      }
+    }
+
+    // Transition room when player roach crosses edge
+    function transitionRoom(newX, newY, direction) {
+      const newRoom = `${newX},${newY}`;
+      if (!state.rooms[newRoom]) return;
+
+      // Remove player from old room
+      const oldRoom = state.rooms[state.currentRoom];
+      const idx = oldRoom.roaches.indexOf(state.playerRoach);
+      if (idx > -1) oldRoom.roaches.splice(idx, 1);
+      state.playerRoach.el.remove();
+
+      // Clear display
+      container.querySelectorAll('.roach').forEach(el => el.remove());
+      container.querySelectorAll('.house-bot').forEach(el => el.remove());
+
+      // Update current room
+      state.currentRoom = newRoom;
+
+      // Position player on opposite edge
+      if (direction === 'left') {
+        state.playerRoach.x = CONTAINER_WIDTH - ROACH_WIDTH - 10;
+      } else if (direction === 'right') {
+        state.playerRoach.x = 10;
+      } else if (direction === 'up') {
+        state.playerRoach.y = CONTAINER_HEIGHT - ROACH_HEIGHT - 10;
+      } else if (direction === 'down') {
+        state.playerRoach.y = 10;
+      }
+
+      // Add player to new room
+      container.appendChild(state.playerRoach.el);
+      state.rooms[newRoom].roaches.push(state.playerRoach);
+
+      // Render roaches in new room
+      for (const roach of state.rooms[newRoom].roaches) {
+        if (roach !== state.playerRoach) {
+          container.appendChild(roach.el);
+        }
+      }
+
+      // Render house bots in new room
+      for (const bot of state.rooms[newRoom].houseBots) {
+        container.appendChild(bot.el);
+      }
+
+      // Update motel visibility for new room
+      updateMotelVisibility();
+
+      updateUI();
+      updateControlCounts();
+      log(`Crawled to room ${newRoom}`);
+    }
+
+    // Switch room (now only used internally)
+    function switchRoom(newRoom) {
+      if (newRoom === state.currentRoom) return;
+
+      // Remove player roach from current room
+      const oldRoom = state.rooms[state.currentRoom];
+      const idx = oldRoom.roaches.indexOf(state.playerRoach);
+      if (idx > -1) oldRoom.roaches.splice(idx, 1);
+      state.playerRoach.el.remove();
+
+      // Clear display - roaches and house bots
+      container.querySelectorAll('.roach').forEach(el => el.remove());
+      container.querySelectorAll('.house-bot').forEach(el => el.remove());
+
+      // Update room
+      state.currentRoom = newRoom;
+
+      // Add player to new room
+      state.playerRoach.x = Math.random() * (CONTAINER_WIDTH - 20) + 10;
+      state.playerRoach.y = Math.random() * (CONTAINER_HEIGHT - 20) + 10;
+      container.appendChild(state.playerRoach.el);
+      state.rooms[newRoom].roaches.push(state.playerRoach);
+
+      // Render existing roaches in new room
+      for (const roach of state.rooms[newRoom].roaches) {
+        if (roach !== state.playerRoach) {
+          container.appendChild(roach.el);
+        }
+      }
+
+      // Render house bots in new room
+      for (const bot of state.rooms[newRoom].houseBots) {
+        container.appendChild(bot.el);
+      }
+
+      updateUI();
+      updateControlCounts();
+      log(`Switched to room ${newRoom} (${state.rooms[newRoom].houseBots.length} house bots)`);
+    }
+
+    // UI updates
+    function updateUI() {
+      document.getElementById('balance').textContent = state.balance.toFixed(2);
+      document.getElementById('banked').textContent = state.bankedBalance.toFixed(2);
+      document.getElementById('alive-time').textContent = Math.floor(state.aliveTime) + 's';
+      document.getElementById('kills').textContent = state.kills;
+      document.getElementById('current-room').textContent = state.currentRoom;
+      document.getElementById('stompers').textContent = state.rooms[state.currentRoom].houseBots.length + 1; // +1 for player
+
+      // Update player HP
+      if (state.playerRoach) {
+        document.getElementById('player-hp').textContent = state.playerRoach.hp;
+      }
+      updateHealButton();
+
+      // Update room grid (minimap) with wealth and bot indicators
+      document.querySelectorAll('.room-cell').forEach(cell => {
+        const roomKey = cell.dataset.room;
+        const room = state.rooms[roomKey];
+        cell.classList.toggle('active', roomKey === state.currentRoom);
+
+        // Calculate wealth for this room
+        const wealth = getRoomWealth(roomKey);
+        const maxWealth = 50; // Cap for display scaling
+        const wealthPercent = Math.min((wealth / maxWealth) * 100, 100);
+
+        // Update wealth bar
+        const wealthFill = cell.querySelector('.wealth-fill');
+        if (wealthFill) {
+          wealthFill.style.width = wealthPercent + '%';
+        }
+
+        // Update bot indicator (show boot icons for each bot)
+        const botIndicator = cell.querySelector('.bot-indicator');
+        if (botIndicator) {
+          const botCount = room.houseBots.length;
+          botIndicator.textContent = botCount > 0 ? '!' .repeat(Math.min(botCount, 5)) : '';
+        }
+      });
+    }
+
+    function log(msg) {
+      const logEl = document.getElementById('log');
+      logEl.innerHTML = msg + '<br>' + logEl.innerHTML;
+      if (logEl.children.length > 50) {
+        logEl.removeChild(logEl.lastChild);
+      }
+    }
+
+    // Track mouse position for live boot cursor
+    let mouseX = 0, mouseY = 0, mouseInContainer = false;
+
+    container.addEventListener('mouseenter', () => {
+      mouseInContainer = true;
+      boot.classList.add('hovering');
+    });
+
+    container.addEventListener('mouseleave', () => {
+      mouseInContainer = false;
+      boot.classList.remove('hovering');
+    });
+
+    let prevMouseX = 0, prevMouseY = 0, bootTilt = 0;
+
+    container.addEventListener('mousemove', (e) => {
+      const rect = container.getBoundingClientRect();
+      const newMouseX = e.clientX - rect.left;
+      const newMouseY = e.clientY - rect.top;
+
+      // Calculate tilt based on horizontal movement
+      const dx = newMouseX - prevMouseX;
+      if (Math.abs(dx) > 1) {
+        bootTilt = Math.max(-25, Math.min(25, dx * 3));
+      } else {
+        // Gradually return to center
+        bootTilt *= 0.9;
+      }
+
+      boot.style.left = newMouseX + 'px';
+      boot.style.top = newMouseY + 'px';
+      boot.style.transform = `translateX(-50%) translateY(-80%) rotate(${bootTilt}deg)`;
+
+      prevMouseX = newMouseX;
+      prevMouseY = newMouseY;
+      mouseX = newMouseX;
+      mouseY = newMouseY;
+    });
+
+    // Click to stomp
+    container.addEventListener('click', (e) => {
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      stomp(x, y);
+    });
+
+    // Room switching now happens by moving roach off edge - no click handlers
+
+    // Game control functions
+    function addBot() {
+      const room = state.rooms[state.currentRoom];
+      const bot = new HouseBot(state.currentRoom);
+      room.houseBots.push(bot);
+      container.appendChild(bot.el);
+      updateControlCounts();
+    }
+
+    function removeBot() {
+      const room = state.rooms[state.currentRoom];
+      if (room.houseBots.length > 0) {
+        const bot = room.houseBots.pop();
+        bot.remove();
+        updateControlCounts();
+      }
+    }
+
+    function addGrayRoach() {
+      const room = state.rooms[state.currentRoom];
+      const roach = new Roach(false, Math.random() * 2); // Low balance = gray
+      room.roaches.push(roach);
+      updateControlCounts();
+    }
+
+    function removeGrayRoach() {
+      const room = state.rooms[state.currentRoom];
+      for (let i = room.roaches.length - 1; i >= 0; i--) {
+        const roach = room.roaches[i];
+        if (!roach.isPlayer && roach.balance < 10) {
+          roach.remove();
+          room.roaches.splice(i, 1);
+          updateControlCounts();
+          return;
+        }
+      }
+    }
+
+    function addYellowRoach() {
+      const room = state.rooms[state.currentRoom];
+      const roach = new Roach(false, 10 + Math.random() * 10); // High balance = yellow
+      room.roaches.push(roach);
+      updateControlCounts();
+    }
+
+    function removeYellowRoach() {
+      const room = state.rooms[state.currentRoom];
+      for (let i = room.roaches.length - 1; i >= 0; i--) {
+        const roach = room.roaches[i];
+        if (!roach.isPlayer && roach.balance >= 10) {
+          roach.remove();
+          room.roaches.splice(i, 1);
+          updateControlCounts();
+          return;
+        }
+      }
+    }
+
+    function updateControlCounts() {
+      const room = state.rooms[state.currentRoom];
+      document.getElementById('bot-count').textContent = room.houseBots.length;
+
+      let grayCount = 0, yellowCount = 0;
+      for (const roach of room.roaches) {
+        if (roach.isPlayer) continue;
+        if (roach.balance >= 10) yellowCount++;
+        else grayCount++;
+      }
+      document.getElementById('gray-count').textContent = grayCount;
+      document.getElementById('yellow-count').textContent = yellowCount;
+    }
+
+    // Speed control
+    function adjustSpeed(delta) {
+      gameSpeed = Math.max(0.1, Math.min(2.0, gameSpeed + delta));
+      document.getElementById('speed-display').textContent = gameSpeed.toFixed(1) + 'x';
+    }
+
+    // Motel debug controls
+    function resizeMotel(delta) {
+      currentMotelSize = Math.max(40, Math.min(300, currentMotelSize + delta));
+      motelEl.style.width = currentMotelSize + 'px';
+      motelEl.style.height = currentMotelSize + 'px';
+      document.getElementById('motel-size').textContent = currentMotelSize;
+    }
+
+    function toggleMotelPause() {
+      motelPaused = !motelPaused;
+      document.getElementById('pause-btn').textContent = motelPaused ? 'Resume' : 'Pause';
+      timerEl.classList.toggle('paused', motelPaused);
+      if (motelPaused) {
+        log('<span style="color:#f00">Motel timer PAUSED</span>');
+      } else {
+        log('<span style="color:#0f0">Motel timer RESUMED</span>');
+      }
+    }
+
+    function forceSpawnMotel() {
+      if (state.motel.active) {
+        despawnMotel();
+      }
+      spawnMotel();
+    }
+
+    function forceSpawnMotelHere() {
+      if (state.motel.active) {
+        despawnMotel();
+      }
+      // Override to spawn in current room
+      state.motel.room = state.currentRoom;
+      state.motel.x = 200 + Math.random() * 200;
+      state.motel.y = 100 + Math.random() * 150;
+      state.motel.active = true;
+      state.motel.despawnTime = Date.now() + state.motel.stayDuration;
+
+      motelEl.classList.remove('hidden');
+      motelEl.style.left = state.motel.x + 'px';
+      motelEl.style.top = state.motel.y + 'px';
+
+      log(`<span style="color:#f0c040">ROACH MOTEL spawned HERE!</span>`);
+    }
+
+    const HEAL_COST = 1;
+
+    function healRoach() {
+      if (!state.playerRoach) return;
+      if (state.playerRoach.hp >= 3) return;
+      if (state.balance < HEAL_COST) {
+        log(`<span class="death">Not enough $ROACH to heal! Need $${HEAL_COST}</span>`);
+        return;
+      }
+
+      state.balance -= HEAL_COST;
+      state.playerRoach.hp = Math.min(state.playerRoach.hp + 1, 3);
+      state.playerRoach.balance = state.balance;
+      state.playerRoach.updateAppearance();
+      log(`<span class="kill">Healed!</span> <span class="money">-$${HEAL_COST}</span> (${state.playerRoach.hp}/3 HP)`);
+      updateUI();
+    }
+
+    function updateHealButton() {
+      const btn = document.getElementById('heal-btn');
+      const canHeal = state.playerRoach && state.playerRoach.hp < 3 && state.balance >= HEAL_COST;
+      btn.disabled = !canHeal;
+    }
+
+    // Game loop
+    let botAdjustTimer = 0;
+    function gameLoop() {
+      handlePlayerInput();
+      survivalIncome();
+      updateHouseBots();
+      updatePlayerArrow();
+
+      // Roach Motel updates
+      updateMotelTimer();
+      checkMotelCollision();
+
+      // Periodically adjust house bots based on room wealth (every ~60 frames / 1 second)
+      botAdjustTimer++;
+      if (botAdjustTimer >= 60) {
+        botAdjustTimer = 0;
+        adjustAllRoomBots();
+      }
+
+      // Update all roaches in current room
+      const room = state.rooms[state.currentRoom];
+      for (const roach of room.roaches) {
+        if (!roach.isDead) roach.update();
+      }
+
+      // Spawn new roaches occasionally
+      if (Math.random() < 0.02) {
+        spawnRoach(state.currentRoom);
+      }
+
+      // Also spawn in other rooms (background simulation)
+      for (const roomKey of Object.keys(state.rooms)) {
+        if (roomKey !== state.currentRoom && Math.random() < 0.01) {
+          // Just increase roach count conceptually
+          if (state.rooms[roomKey].roaches.length < 10) {
+            state.rooms[roomKey].roaches.push(new Roach(false, Math.random() * 3));
+            state.rooms[roomKey].roaches[state.rooms[roomKey].roaches.length - 1].el.remove(); // Don't render
+          }
+        }
+      }
+
+      updateUI();
+      updateControlCounts();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Initialize
+    initPlayerRoach();
+    for (let i = 0; i < 8; i++) {
+      spawnRoach('0,0');
+    }
+    // Initialize house bots in all rooms
+    for (const roomKey of Object.keys(state.rooms)) {
+      initHouseBots(roomKey);
+    }
+    updateControlCounts();
+    log('Game started! Your roach is <span style="color:#0ff">CYAN</span>. <span style="color:#a00">RED BOOTS</span> hunt wealthy roaches. Enter the <span style="color:#f0c040">ROACH MOTEL</span> to bank your $ROACH!');
+
+    // Debug: verify motel elements exist
+    console.log('Motel element:', motelEl);
+    console.log('Timer element:', timerEl);
+    console.log('Initial nextSpawnTime:', state.motel.nextSpawnTime, 'Now:', Date.now());
+
+    // Force first motel spawn after 3 seconds for testing
+    setTimeout(() => {
+      console.log('Force spawning motel...');
+      spawnMotel();
+    }, 3000);
+
+    gameLoop();
+  </script>
+</body>
+</html>

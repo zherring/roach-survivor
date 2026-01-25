@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sprite Test - Fine Tune Coordinates</title>
+  <style>
+    body {
+      background: #222;
+      color: #fff;
+      font-family: monospace;
+      padding: 20px;
+    }
+    h2 { color: #0f0; margin-top: 30px; }
+    .test-row {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+      margin: 20px 0;
+      flex-wrap: wrap;
+    }
+    .sprite-box {
+      background: #333;
+      padding: 10px;
+      text-align: center;
+    }
+    .sprite-box label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    .sprite-container {
+      border: 1px solid #f00;
+      display: inline-block;
+      overflow: hidden;
+    }
+    .sprite {
+      background-image: url('game-sprite.png');
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    input[type="number"] {
+      width: 60px;
+      background: #111;
+      border: 1px solid #555;
+      color: #fff;
+      padding: 2px 5px;
+      margin: 2px;
+    }
+    .controls {
+      margin: 10px 0;
+      font-size: 11px;
+    }
+    .reference {
+      border: 2px solid #0f0;
+      margin: 20px 0;
+      padding: 10px;
+      background: #111;
+    }
+    .reference img {
+      max-width: 100%;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sprite Sheet Test Page</h1>
+
+  <div class="reference">
+    <h3>Full Sprite Sheet Reference:</h3>
+    <img src="game-sprite.png" alt="Full sprite sheet">
+  </div>
+
+  <h2>Roach Sprite (adjust until roach is visible)</h2>
+  <div class="test-row">
+    <div class="sprite-box">
+      <label>Cockroach Idle</label>
+      <div class="controls">
+        X: <input type="number" id="roach-x" value="0" onchange="updateRoach()">
+        Y: <input type="number" id="roach-y" value="0" onchange="updateRoach()">
+        W: <input type="number" id="roach-w" value="128" onchange="updateRoach()">
+        H: <input type="number" id="roach-h" value="128" onchange="updateRoach()">
+        Scale: <input type="number" id="roach-scale" value="512" onchange="updateRoach()">
+      </div>
+      <div class="sprite-container">
+        <div id="roach-sprite" class="sprite"></div>
+      </div>
+      <div id="roach-css" style="font-size:10px; color:#888; margin-top:5px;"></div>
+    </div>
+  </div>
+
+  <h2>Boot Sprite (adjust until boot is visible)</h2>
+  <div class="test-row">
+    <div class="sprite-box">
+      <label>Boot Hover</label>
+      <div class="controls">
+        X: <input type="number" id="boot-x" value="0" onchange="updateBoot()">
+        Y: <input type="number" id="boot-y" value="256" onchange="updateBoot()">
+        W: <input type="number" id="boot-w" value="256" onchange="updateBoot()">
+        H: <input type="number" id="boot-h" value="256" onchange="updateBoot()">
+        Scale: <input type="number" id="boot-scale" value="512" onchange="updateBoot()">
+      </div>
+      <div class="sprite-container">
+        <div id="boot-sprite" class="sprite"></div>
+      </div>
+      <div id="boot-css" style="font-size:10px; color:#888; margin-top:5px;"></div>
+    </div>
+  </div>
+
+  <h2>Current Values for Copy/Paste:</h2>
+  <pre id="output" style="background:#111; padding:15px; border:1px solid #444;"></pre>
+
+  <script>
+    function updateRoach() {
+      const x = parseInt(document.getElementById('roach-x').value) || 0;
+      const y = parseInt(document.getElementById('roach-y').value) || 0;
+      const w = parseInt(document.getElementById('roach-w').value) || 128;
+      const h = parseInt(document.getElementById('roach-h').value) || 128;
+      const scale = parseInt(document.getElementById('roach-scale').value) || 512;
+
+      const sprite = document.getElementById('roach-sprite');
+      sprite.style.width = w + 'px';
+      sprite.style.height = h + 'px';
+      sprite.style.backgroundPosition = `-${x}px -${y}px`;
+      sprite.style.backgroundSize = `${scale}px ${scale}px`;
+
+      document.getElementById('roach-css').textContent =
+        `background-position: -${x}px -${y}px; width: ${w}px; height: ${h}px; background-size: ${scale}px`;
+
+      updateOutput();
+    }
+
+    function updateBoot() {
+      const x = parseInt(document.getElementById('boot-x').value) || 0;
+      const y = parseInt(document.getElementById('boot-y').value) || 256;
+      const w = parseInt(document.getElementById('boot-w').value) || 256;
+      const h = parseInt(document.getElementById('boot-h').value) || 256;
+      const scale = parseInt(document.getElementById('boot-scale').value) || 512;
+
+      const sprite = document.getElementById('boot-sprite');
+      sprite.style.width = w + 'px';
+      sprite.style.height = h + 'px';
+      sprite.style.backgroundPosition = `-${x}px -${y}px`;
+      sprite.style.backgroundSize = `${scale}px ${scale}px`;
+
+      document.getElementById('boot-css').textContent =
+        `background-position: -${x}px -${y}px; width: ${w}px; height: ${h}px; background-size: ${scale}px`;
+
+      updateOutput();
+    }
+
+    function updateOutput() {
+      const rx = document.getElementById('roach-x').value;
+      const ry = document.getElementById('roach-y').value;
+      const rw = document.getElementById('roach-w').value;
+      const rh = document.getElementById('roach-h').value;
+      const rs = document.getElementById('roach-scale').value;
+
+      const bx = document.getElementById('boot-x').value;
+      const by = document.getElementById('boot-y').value;
+      const bw = document.getElementById('boot-w').value;
+      const bh = document.getElementById('boot-h').value;
+      const bs = document.getElementById('boot-scale').value;
+
+      document.getElementById('output').textContent = `
+ROACH SPRITE:
+  background-position: -${rx}px -${ry}px;
+  width: ${rw}px;
+  height: ${rh}px;
+  background-size: ${rs}px ${rs}px;
+
+BOOT SPRITE:
+  background-position: -${bx}px -${by}px;
+  width: ${bw}px;
+  height: ${bh}px;
+  background-size: ${bs}px ${bs}px;
+`;
+    }
+
+    // Initialize
+    updateRoach();
+    updateBoot();
+  </script>
+</body>
+</html>
