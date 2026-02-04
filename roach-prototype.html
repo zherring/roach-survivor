@@ -141,6 +141,14 @@
       filter: brightness(1.3) sepia(1) hue-rotate(130deg) saturate(3);
       z-index: 20; /* Above other roaches */
     }
+    /* Remote player roach - purple tint */
+    .roach.remote {
+      filter: brightness(1.2) sepia(1) hue-rotate(250deg) saturate(3);
+      z-index: 15;
+    }
+    .roach.remote.rich {
+      filter: brightness(1.25) sepia(1) hue-rotate(290deg) saturate(3);
+    }
 
     /* Big pixelated red arrow pointing down at player */
     .player-arrow {
@@ -439,6 +447,7 @@
     <div class="stat">Kills: <span id="kills">0</span></div>
     <div class="stat">Room: <span id="current-room">0,0</span></div>
     <div class="stat">Stompers here: <span id="stompers">1</span></div>
+    <div class="stat">Net: <span id="net-status">offline</span> (<span id="net-players">1</span>)</div>
   </div>
 
   <div id="room-grid">
@@ -530,6 +539,15 @@
       }
     };
 
+    const network = {
+      socket: null,
+      connected: false,
+      playerId: null,
+      remoteRoaches: new Map(),
+      lastStateSent: 0,
+      reconnectTimer: null,
+    };
+
     // House Bot class - visible AI stompers
     class HouseBot {
       constructor(room) {
@@ -551,7 +569,7 @@
 
       pickTarget() {
         const room = state.rooms[this.room];
-        const aliveRoaches = room.roaches.filter(r => !r.isDead);
+        const aliveRoaches = room.roaches.filter(r => !r.isDead && !r.isRemote);
         if (aliveRoaches.length === 0) return;
 
         // Prefer rich roaches, but sometimes target randomly
@@ -612,7 +630,7 @@
 
         for (let i = room.roaches.length - 1; i >= 0; i--) {
           const roach = room.roaches[i];
-          if (roach.isDead) continue; // Skip dead roaches
+          if (roach.isDead || roach.isRemote) continue; // Skip dead or remote roaches
 
           // Check rectangular collision
           const roachCenterX = roach.x + ROACH_WIDTH / 2;
@@ -1024,7 +1042,9 @@
 
     // Roach class
     class Roach {
-      constructor(isPlayer = false, startBalance = 0) {
+      constructor({ isPlayer = false, isRemote = false, startBalance = 0, id = null } = {}) {
+        this.id = id;
+        this.isRemote = isRemote;
         this.x = Math.random() * (CONTAINER_WIDTH - ROACH_WIDTH) + ROACH_WIDTH/2;
         this.y = Math.random() * (CONTAINER_HEIGHT - ROACH_HEIGHT) + ROACH_HEIGHT/2;
         this.vx = (Math.random() - 0.5) * 2;
@@ -1032,13 +1052,14 @@
         this.hp = 3;
         this.balance = startBalance || (Math.random() * 2); // $ROACH this roach carries
         this.isPlayer = isPlayer;
-        this.isHouse = !isPlayer && Math.random() < 0.3; // 30% house roaches
+        this.isHouse = !isPlayer && !isRemote && Math.random() < 0.3; // 30% house roaches
         this.isDead = false;
         this.animFrame = 0;
         this.animTimer = 0;
         this.lastAngle = Math.random() * 360; // Random starting direction
+        this.roomKey = state.currentRoom;
         this.el = document.createElement('div');
-        this.el.className = 'roach' + (isPlayer ? ' player' : '');
+        this.el.className = `roach${isPlayer ? ' player' : ''}${isRemote ? ' remote' : ''}`;
         this.updateAppearance();
         container.appendChild(this.el);
         this.render();
@@ -1071,6 +1092,11 @@
       }
 
       update() {
+        if (this.isRemote) {
+          this.updateAnimation();
+          this.render();
+          return;
+        }
         // Random steering for chaos
         this.vx += (Math.random() - 0.5) * 0.3;
         this.vy += (Math.random() - 0.5) * 0.3;
@@ -1196,6 +1222,21 @@
         this.el.style.transform = `rotate(${rotation}deg) scale(${wealthScale})`;
       }
 
+      applyNetworkState(playerState) {
+        this.x = playerState.x;
+        this.y = playerState.y;
+        this.vx = playerState.vx || 0;
+        this.vy = playerState.vy || 0;
+        this.balance = playerState.balance || 0;
+        this.hp = playerState.hp || 3;
+        this.isDead = Boolean(playerState.isDead);
+        this.el.classList.toggle('dead', this.isDead);
+        this.el.classList.toggle('crawling', !this.isDead);
+        this.updateAppearance();
+        this.updateAnimation();
+        this.render();
+      }
+
       hit() {
         this.hp--;
         // Show hit sprite with red flash
@@ -1236,7 +1277,8 @@
 
     // Initialize player roach
     function initPlayerRoach() {
-      state.playerRoach = new Roach(true, 0);
+      state.playerRoach = new Roach({ isPlayer: true, startBalance: 0 });
+      state.playerRoach.roomKey = state.currentRoom;
       state.rooms[state.currentRoom].roaches.push(state.playerRoach);
       state.aliveTime = 0;
     }
@@ -1244,7 +1286,7 @@
     // Spawn house/enemy roaches
     function spawnRoach(room) {
       if (state.rooms[room].roaches.length < 15) {
-        const roach = new Roach(false, Math.random() * 3);
+        const roach = new Roach({ startBalance: Math.random() * 3 });
         state.rooms[room].roaches.push(roach);
         return roach;
       }
@@ -1293,7 +1335,7 @@
 
       for (let i = room.roaches.length - 1; i >= 0; i--) {
         const roach = room.roaches[i];
-        if (roach === state.playerRoach || roach.isDead) continue; // Can't stomp yourself or dead roaches
+        if (roach === state.playerRoach || roach.isDead || roach.isRemote) continue; // Can't stomp yourself, dead, or remote roaches
 
         // Check if roach center is within the boot rectangle
         // Roach position is top-left, so add half dimensions to get center
@@ -1345,7 +1387,7 @@
         const bootCenterX = x;
         const bootCenterY = y - bootH * 0.3;
         for (const roach of room.roaches) {
-          if (roach.isDead) continue;
+          if (roach.isDead || roach.isRemote) continue;
           const dx = (roach.x + ROACH_WIDTH/2) - bootCenterX;
           const dy = (roach.y + ROACH_HEIGHT/2) - bootCenterY;
           const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1354,6 +1396,8 @@
           }
         }
       }
+
+      sendStomp(x, y);
     }
 
     // Player roach death
@@ -1373,6 +1417,7 @@
 
       log(`<span class="death">YOUR ROACH DIED!</span> <span class="money">Lost $${lost.toFixed(2)}</span>`);
       updateUI();
+      sendPlayerState(true);
     }
 
     // Initialize house bots for a room (now uses dynamic wealth-based system)
@@ -1420,7 +1465,7 @@
       // All roaches in all rooms earn income
       for (const roomKey of Object.keys(state.rooms)) {
         for (const roach of state.rooms[roomKey].roaches) {
-          if (!roach.isDead) {
+          if (!roach.isDead && !roach.isRemote) {
             roach.balance += incomePerFrame;
             roach.updateAppearance();
           }
@@ -1450,6 +1495,7 @@
 
       // Update current room
       state.currentRoom = newRoom;
+      state.playerRoach.roomKey = newRoom;
 
       // Position player on opposite edge
       if (direction === 'left') {
@@ -1483,6 +1529,7 @@
 
       updateUI();
       updateControlCounts();
+      sendPlayerState(true);
       log(`Crawled to room ${newRoom}`);
     }
 
@@ -1502,6 +1549,7 @@
 
       // Update room
       state.currentRoom = newRoom;
+      state.playerRoach.roomKey = newRoom;
 
       // Add player to new room
       state.playerRoach.x = Math.random() * (CONTAINER_WIDTH - 20) + 10;
@@ -1523,6 +1571,7 @@
 
       updateUI();
       updateControlCounts();
+      sendPlayerState(true);
       log(`Switched to room ${newRoom} (${state.rooms[newRoom].houseBots.length} house bots)`);
     }
 
@@ -1533,7 +1582,15 @@
       document.getElementById('alive-time').textContent = Math.floor(state.aliveTime) + 's';
       document.getElementById('kills').textContent = state.kills;
       document.getElementById('current-room').textContent = state.currentRoom;
-      document.getElementById('stompers').textContent = state.rooms[state.currentRoom].houseBots.length + 1; // +1 for player
+      let remoteInRoom = 0;
+      for (const roach of network.remoteRoaches.values()) {
+        if (roach.roomKey === state.currentRoom) {
+          remoteInRoom++;
+        }
+      }
+      document.getElementById('stompers').textContent = state.rooms[state.currentRoom].houseBots.length + 1 + remoteInRoom; // +1 for player
+      document.getElementById('net-status').textContent = network.connected ? 'online' : 'offline';
+      document.getElementById('net-players').textContent = 1 + network.remoteRoaches.size;
 
       // Update player HP
       if (state.playerRoach) {
@@ -1573,6 +1630,159 @@
       if (logEl.children.length > 50) {
         logEl.removeChild(logEl.lastChild);
       }
+    }
+
+    function connectMultiplayer() {
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      const socketUrl = `${protocol}://${location.host}`;
+      const socket = new WebSocket(socketUrl);
+      network.socket = socket;
+
+      socket.addEventListener('open', () => {
+        network.connected = true;
+        updateUI();
+      });
+
+      socket.addEventListener('close', () => {
+        network.connected = false;
+        network.playerId = null;
+        for (const id of Array.from(network.remoteRoaches.keys())) {
+          removeRemoteRoach(id);
+        }
+        updateUI();
+        scheduleReconnect();
+      });
+
+      socket.addEventListener('error', () => {
+        network.connected = false;
+        updateUI();
+      });
+
+      socket.addEventListener('message', (event) => {
+        let payload = null;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (err) {
+          return;
+        }
+
+        if (payload.type === 'welcome') {
+          network.playerId = payload.id;
+          sendPlayerState(true);
+        }
+
+        if (payload.type === 'state') {
+          syncNetworkPlayers(payload.players || []);
+        }
+
+        if (payload.type === 'player_left') {
+          removeRemoteRoach(payload.id);
+        }
+      });
+    }
+
+    function scheduleReconnect() {
+      if (network.reconnectTimer) return;
+      network.reconnectTimer = setTimeout(() => {
+        network.reconnectTimer = null;
+        connectMultiplayer();
+      }, 2000);
+    }
+
+    function sendPlayerState(force = false) {
+      if (!network.socket || network.socket.readyState !== WebSocket.OPEN) return;
+      if (!state.playerRoach) return;
+      const now = Date.now();
+      if (!force && now - network.lastStateSent < 50) return;
+      network.lastStateSent = now;
+      network.socket.send(JSON.stringify({
+        type: 'state_update',
+        state: {
+          x: state.playerRoach.x,
+          y: state.playerRoach.y,
+          vx: state.playerRoach.vx,
+          vy: state.playerRoach.vy,
+          balance: state.balance,
+          hp: state.playerRoach.hp,
+          room: state.currentRoom,
+          isDead: state.playerRoach.isDead,
+        }
+      }));
+    }
+
+    function sendStomp(x, y) {
+      if (!network.socket || network.socket.readyState !== WebSocket.OPEN) return;
+      network.socket.send(JSON.stringify({
+        type: 'stomp',
+        x,
+        y,
+        room: state.currentRoom,
+      }));
+    }
+
+    function syncNetworkPlayers(players) {
+      const seen = new Set();
+      for (const player of players) {
+        if (!player || player.id === network.playerId) continue;
+        seen.add(player.id);
+        const roach = ensureRemoteRoach(player);
+        roach.applyNetworkState(player);
+      }
+
+      for (const [id] of network.remoteRoaches.entries()) {
+        if (!seen.has(id)) {
+          removeRemoteRoach(id);
+        }
+      }
+    }
+
+    function ensureRemoteRoach(player) {
+      let roach = network.remoteRoaches.get(player.id);
+      if (!roach) {
+        roach = new Roach({
+          isRemote: true,
+          startBalance: player.balance || 0,
+          id: player.id,
+        });
+        network.remoteRoaches.set(player.id, roach);
+      }
+      if (player.room) {
+        moveRemoteRoach(roach, player.room);
+      }
+      return roach;
+    }
+
+    function moveRemoteRoach(roach, newRoom) {
+      if (!state.rooms[newRoom]) return;
+      const oldRoom = roach.roomKey;
+      if (oldRoom && state.rooms[oldRoom]) {
+        const idx = state.rooms[oldRoom].roaches.indexOf(roach);
+        if (idx > -1) state.rooms[oldRoom].roaches.splice(idx, 1);
+      }
+      roach.roomKey = newRoom;
+      if (!state.rooms[newRoom].roaches.includes(roach)) {
+        state.rooms[newRoom].roaches.push(roach);
+      }
+      if (newRoom === state.currentRoom) {
+        if (!roach.el.isConnected) {
+          container.appendChild(roach.el);
+        }
+      } else if (roach.el.isConnected) {
+        roach.el.remove();
+      }
+    }
+
+    function removeRemoteRoach(id) {
+      const roach = network.remoteRoaches.get(id);
+      if (!roach) return;
+      if (roach.el.isConnected) {
+        roach.el.remove();
+      }
+      if (roach.roomKey && state.rooms[roach.roomKey]) {
+        const idx = state.rooms[roach.roomKey].roaches.indexOf(roach);
+        if (idx > -1) state.rooms[roach.roomKey].roaches.splice(idx, 1);
+      }
+      network.remoteRoaches.delete(id);
     }
 
     // Track mouse position for live boot cursor
@@ -1644,7 +1854,7 @@
 
     function addGrayRoach() {
       const room = state.rooms[state.currentRoom];
-      const roach = new Roach(false, Math.random() * 2); // Low balance = gray
+      const roach = new Roach({ startBalance: Math.random() * 2 }); // Low balance = gray
       room.roaches.push(roach);
       updateControlCounts();
     }
@@ -1664,7 +1874,7 @@
 
     function addYellowRoach() {
       const room = state.rooms[state.currentRoom];
-      const roach = new Roach(false, 10 + Math.random() * 10); // High balance = yellow
+      const roach = new Roach({ startBalance: 10 + Math.random() * 10 }); // High balance = yellow
       room.roaches.push(roach);
       updateControlCounts();
     }
@@ -1762,6 +1972,7 @@
       state.playerRoach.updateAppearance();
       log(`<span class="kill">Healed!</span> <span class="money">-$${HEAL_COST}</span> (${state.playerRoach.hp}/3 HP)`);
       updateUI();
+      sendPlayerState(true);
     }
 
     function updateHealButton() {
@@ -1792,7 +2003,7 @@
       // Update all roaches in current room
       const room = state.rooms[state.currentRoom];
       for (const roach of room.roaches) {
-        if (!roach.isDead) roach.update();
+        if (!roach.isDead && !roach.isRemote) roach.update();
       }
 
       // Spawn new roaches occasionally
@@ -1805,7 +2016,7 @@
         if (roomKey !== state.currentRoom && Math.random() < 0.01) {
           // Just increase roach count conceptually
           if (state.rooms[roomKey].roaches.length < 10) {
-            state.rooms[roomKey].roaches.push(new Roach(false, Math.random() * 3));
+            state.rooms[roomKey].roaches.push(new Roach({ startBalance: Math.random() * 3 }));
             state.rooms[roomKey].roaches[state.rooms[roomKey].roaches.length - 1].el.remove(); // Don't render
           }
         }
@@ -1813,10 +2024,12 @@
 
       updateUI();
       updateControlCounts();
+      sendPlayerState();
       requestAnimationFrame(gameLoop);
     }
 
     // Initialize
+    connectMultiplayer();
     initPlayerRoach();
     for (let i = 0; i < 8; i++) {
       spawnRoach('0,0');
