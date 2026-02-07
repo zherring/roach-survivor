@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>$ROACH Multiplayer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #111;
+      color: #fff;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 { color: #0f0; margin-bottom: 10px; }
+
+    #connection-status {
+      color: #f00;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+    #connection-status.connected { color: #0f0; }
+
+    #stats {
+      display: flex;
+      gap: 30px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .stat { color: #aaa; }
+    .stat span { color: #ff0; font-weight: bold; }
+    #heal-btn {
+      background: #040;
+      border: 1px solid #0a0;
+      color: #0f0;
+      font-family: monospace;
+      font-size: 10px;
+      padding: 2px 6px;
+      cursor: pointer;
+      margin-left: 5px;
+    }
+    #heal-btn:hover { background: #060; }
+    #heal-btn:disabled { background: #222; border-color: #444; color: #666; cursor: not-allowed; }
+
+    #room-grid {
+      display: grid;
+      gap: 5px;
+      margin-bottom: 10px;
+    }
+    .room-cell {
+      width: 50px;
+      height: 35px;
+      background: #222;
+      border: 1px solid #444;
+      color: #666;
+      font-family: monospace;
+      font-size: 9px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.2;
+    }
+    .room-cell.active { border-color: #0f0; color: #0f0; background: #131; }
+    .room-cell .wealth-bar {
+      width: 100%;
+      height: 3px;
+      background: #333;
+      margin-top: 2px;
+    }
+    .room-cell .wealth-fill {
+      height: 100%;
+      background: #ff0;
+      transition: width 0.3s;
+    }
+    .room-cell .bot-indicator {
+      color: #a00;
+      font-size: 8px;
+    }
+
+    #game-container {
+      position: relative;
+      width: 600px;
+      height: 400px;
+      background: #000;
+      border: 2px solid #333;
+      cursor: none;
+      overflow: hidden;
+    }
+
+    /* Roach sprites */
+    .roach {
+      position: absolute;
+      width: 35px;
+      height: 35px;
+      background-image: url('assets/game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 200px 200px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background-position: -10px -20px;
+      transition: filter 0.1s;
+      transform-origin: center center;
+      z-index: 10;
+    }
+    .roach.crawling { background-position: -60px -20px; }
+    .roach.hurt { background-position: -110px -20px; }
+    .roach.hurt::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: #ff0000;
+      opacity: 0.85;
+      animation: hit-flash 0.4s ease-out forwards;
+      pointer-events: none;
+    }
+    @keyframes hit-flash {
+      0% { opacity: 0.95; transform: scale(1.3); }
+      30% { opacity: 0.9; }
+      100% { opacity: 0; transform: scale(1); }
+    }
+    .roach.dead { background-position: -160px -20px; }
+    .roach.rich { filter: brightness(1.2) sepia(0.8) hue-rotate(10deg) saturate(2); }
+    .roach.player-self {
+      filter: brightness(1.3) sepia(1) hue-rotate(130deg) saturate(3);
+      z-index: 20;
+    }
+    .roach.player-self.rich {
+      filter: brightness(1.3) sepia(1) hue-rotate(250deg) saturate(3);
+    }
+    .roach.player-other {
+      filter: brightness(1.3) sepia(1) hue-rotate(200deg) saturate(2);
+      z-index: 15;
+    }
+    .roach.player-other.rich {
+      filter: brightness(1.3) sepia(1) hue-rotate(280deg) saturate(2);
+    }
+
+    /* Player name label */
+    .roach-name {
+      position: absolute;
+      font-family: monospace;
+      font-size: 9px;
+      color: #fff;
+      text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 200;
+      text-align: center;
+    }
+
+    /* Player arrow */
+    .player-arrow {
+      position: absolute;
+      z-index: 1000;
+      pointer-events: none;
+      width: 16px;
+      height: 20px;
+      image-rendering: pixelated;
+    }
+    .player-arrow::before {
+      content: '';
+      position: absolute;
+      width: 6px;
+      height: 12px;
+      background: #ff0000;
+      left: 5px;
+      top: 0;
+      box-shadow: 0 0 0 1px #800000;
+    }
+    .player-arrow::after {
+      content: '';
+      position: absolute;
+      width: 0; height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 10px solid #ff0000;
+      left: 0;
+      top: 10px;
+      filter: drop-shadow(0 1px 0 #800000);
+    }
+
+    /* Boot cursor */
+    .boot {
+      position: absolute;
+      width: 100px;
+      height: 110px;
+      background-image: url('assets/game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 300px 300px;
+      background-position: -27px -163px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(-80%);
+      transform-origin: 50% 80%;
+      opacity: 0;
+      z-index: 100;
+      transition: transform 0.1s ease-out;
+      filter: brightness(1) sepia(1) hue-rotate(70deg) saturate(2);
+    }
+    .boot.hovering { opacity: 0.6; }
+    .boot.stomping {
+      background-position: -177px -163px;
+      animation: stomp 0.15s ease-out;
+    }
+    @keyframes stomp {
+      0% { opacity: 1; transform: translateX(-50%) translateY(-120%) scale(1.2); }
+      50% { opacity: 1; transform: translateX(-50%) translateY(-60%) scale(1); }
+      100% { opacity: 0.6; transform: translateX(-50%) translateY(-80%) scale(1); }
+    }
+
+    /* House bot */
+    .house-bot {
+      position: absolute;
+      width: 80px;
+      height: 88px;
+      background-image: url('assets/game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 240px 240px;
+      background-position: -22px -130px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      pointer-events: none;
+      z-index: 50;
+      transition: left 0.05s linear, top 0.05s linear;
+      transform-origin: center center;
+      filter: brightness(1) sepia(1) hue-rotate(-30deg) saturate(3);
+    }
+    .house-bot.stomping {
+      background-position: -142px -130px;
+      animation: bot-stomp 0.25s ease-out;
+    }
+    @keyframes bot-stomp {
+      0% { transform: translateY(-20px) scale(1.3); }
+      40% { transform: translateY(18px) scale(1.15); }
+      60% { transform: translateY(10px) scale(1.05); }
+      100% { transform: translateY(0) scale(1); }
+    }
+
+    /* Screen shake on nearby stomps */
+    #game-container.shake {
+      animation: screen-shake 0.3s ease-out;
+    }
+    @keyframes screen-shake {
+      0% { transform: translate(0, 0); }
+      15% { transform: translate(-4px, 3px); }
+      30% { transform: translate(5px, -2px); }
+      45% { transform: translate(-3px, 4px); }
+      60% { transform: translate(3px, -1px); }
+      75% { transform: translate(-1px, 2px); }
+      100% { transform: translate(0, 0); }
+    }
+
+    /* Shockwave ring — AoE indicator */
+    .shockwave {
+      position: absolute;
+      width: 120px;
+      height: 120px;
+      border: 3px solid rgba(255, 50, 0, 0.8);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 90;
+      animation: shockwave-expand 0.4s ease-out forwards;
+    }
+    @keyframes shockwave-expand {
+      0% { transform: translate(-50%, -50%) scale(0.2); opacity: 1; border-width: 6px; }
+      50% { opacity: 0.7; border-width: 3px; }
+      100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; border-width: 1px; }
+    }
+
+    /* Splat effect — bigger, nastier */
+    .splat {
+      position: absolute;
+      width: 50px;
+      height: 50px;
+      background-image: url('assets/game-sprite.png');
+      background-repeat: no-repeat;
+      background-size: 200px 200px;
+      background-position: -160px -20px;
+      image-rendering: pixelated;
+      pointer-events: none;
+      filter: brightness(0.6) sepia(1) hue-rotate(60deg) saturate(2);
+      animation: splat-fade 1.2s ease-out forwards;
+    }
+    @keyframes splat-fade {
+      0% { transform: scale(0.3) rotate(0deg); opacity: 1; }
+      15% { transform: scale(1.6) rotate(20deg); opacity: 1; }
+      30% { transform: scale(1.3) rotate(15deg); opacity: 0.9; }
+      100% { transform: scale(1) rotate(35deg); opacity: 0; }
+    }
+
+    /* Coin shower particles */
+    .coin {
+      position: absolute;
+      font-family: monospace;
+      font-weight: bold;
+      color: #ffd700;
+      text-shadow: 0 0 4px #ff8c00, 1px 1px 0 #000;
+      pointer-events: none;
+      z-index: 500;
+      animation: coin-fly var(--fly-duration, 1s) ease-out forwards;
+    }
+    .coin.big {
+      font-size: 18px;
+      color: #fff;
+      text-shadow: 0 0 8px #ffd700, 0 0 16px #ff4500, 1px 1px 0 #000;
+    }
+    .coin.hud-fly {
+      position: fixed;
+      z-index: 1200;
+      will-change: transform, opacity;
+      animation: none;
+    }
+    @keyframes coin-fly {
+      0% { transform: translateY(0) scale(1); opacity: 1; }
+      30% { opacity: 1; }
+      100% { transform: translateY(var(--fly-y, -80px)) translateX(var(--fly-x, 0px)) scale(0.5); opacity: 0; }
+    }
+    #balance.collecting {
+      animation: balance-pop 0.35s ease-out;
+    }
+    @keyframes balance-pop {
+      0% { transform: scale(1); color: #ff0; }
+      30% { transform: scale(1.35); color: #fff79a; }
+      100% { transform: scale(1); color: #ff0; }
+    }
+
+    /* Roach Motel */
+    .roach-motel {
+      position: absolute;
+      width: 240px;
+      height: 240px;
+      background-color: #000;
+      background-image: url('assets/roach-motel-sprite.jpeg');
+      background-size: cover;
+      background-repeat: no-repeat;
+      background-position: center;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      z-index: 5;
+    }
+    .roach-motel.hidden { display: none !important; }
+
+    /* Saving overlay */
+    .roach.saving::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 255, 100, 0.3);
+      pointer-events: none;
+      animation: saving-pulse 0.5s ease-in-out infinite;
+    }
+    @keyframes saving-pulse {
+      0%, 100% { background: rgba(0, 255, 100, 0.3); }
+      50% { background: rgba(0, 255, 100, 0.5); }
+    }
+
+    .save-countdown {
+      position: absolute;
+      font-family: monospace;
+      font-size: 24px;
+      font-weight: bold;
+      color: #0f0;
+      text-shadow: 0 0 10px #0f0, 2px 2px 0 #000;
+      pointer-events: none;
+      z-index: 500;
+    }
+
+    /* Motel timer */
+    #motel-timer {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(0,0,0,0.9);
+      border: 2px solid #f0c040;
+      padding: 5px 10px;
+      font-size: 12px;
+      color: #f0c040;
+      font-family: monospace;
+      z-index: 300;
+    }
+    #motel-timer.active { color: #0f0; border-color: #0f0; background: rgba(0,50,0,0.9); }
+    #motel-timer .room-indicator {
+      display: block;
+      color: #ff0;
+      font-size: 14px;
+      font-weight: bold;
+      margin-top: 3px;
+    }
+    #motel-timer .room-indicator.here {
+      color: #0f0;
+      animation: blink 0.5s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    #banked-display { color: #f0c040; font-weight: bold; }
+
+    #controls {
+      margin-top: 15px;
+      color: #888;
+      font-size: 12px;
+      text-align: center;
+    }
+    #controls kbd {
+      background: #333;
+      padding: 2px 6px;
+      color: #fff;
+    }
+
+    #log {
+      margin-top: 15px;
+      width: 600px;
+      height: 80px;
+      overflow-y: auto;
+      background: #0a0a0a;
+      border: 1px solid #333;
+      padding: 10px;
+      font-size: 11px;
+      color: #666;
+    }
+    #log .kill { color: #0f0; }
+    #log .death { color: #f00; }
+    #log .money { color: #ff0; }
+
+    #player-count {
+      color: #0ff;
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>$ROACH MULTIPLAYER</h1>
+  <div id="connection-status">Connecting...</div>
+  <div id="player-count"></div>
+
+  <div id="stats">
+    <div class="stat">$ROACH: <span id="balance">0.00</span></div>
+    <div class="stat" id="banked-display">BANKED: <span id="banked">0.00</span></div>
+    <div class="stat">HP: <span id="player-hp">2</span>/2 <button id="heal-btn">Heal ($1)</button></div>
+    <div class="stat">Alive: <span id="alive-time">0s</span></div>
+    <div class="stat">Kills: <span id="kills">0</span></div>
+    <div class="stat">Room: <span id="current-room">1,1</span></div>
+  </div>
+
+  <div id="room-grid"></div>
+
+  <div id="game-container">
+    <div id="boot" class="boot"></div>
+    <div id="roach-motel" class="roach-motel hidden"></div>
+    <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
+    <div id="player-arrow" class="player-arrow"></div>
+  </div>
+
+  <div id="controls">
+    <kbd>Click</kbd> to stomp | <kbd>WASD</kbd> to steer your roach off edges to change rooms | Enter <span style="color:#f0c040">ROACH MOTEL</span> to bank your $ROACH!
+  </div>
+
+  <div id="log"></div>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>
