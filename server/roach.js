@@ -44,9 +44,21 @@ export class Roach {
       p.vy = (p.vy / mag) * maxSpeed;
     }
 
-    // Accept client position (clamped to valid range for room transitions)
-    this.x = Math.max(-15, Math.min(CONTAINER_WIDTH + 15, p.x));
-    this.y = Math.max(-15, Math.min(CONTAINER_HEIGHT + 15, p.y));
+    // Anti-cheat: reject position if it moved further than possible in one tick
+    const clampedX = Math.max(-15, Math.min(CONTAINER_WIDTH + 15, p.x));
+    const clampedY = Math.max(-15, Math.min(CONTAINER_HEIGHT + 15, p.y));
+    const dx = clampedX - this.x;
+    const dy = clampedY - this.y;
+    const posDist = Math.sqrt(dx * dx + dy * dy);
+    const maxDist = maxSpeed * 3; // generous tolerance (a few ticks worth)
+    if (posDist > maxDist) {
+      // Clamp to max allowed distance in the reported direction
+      this.x += (dx / posDist) * maxDist;
+      this.y += (dy / posDist) * maxDist;
+    } else {
+      this.x = clampedX;
+      this.y = clampedY;
+    }
     this.vx = p.vx;
     this.vy = p.vy;
   }

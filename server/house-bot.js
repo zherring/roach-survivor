@@ -1,6 +1,7 @@
 import {
   CONTAINER_WIDTH, CONTAINER_HEIGHT, BOT_WIDTH, BOT_HEIGHT,
   ROACH_WIDTH, ROACH_HEIGHT, BOT_STOMP_COOLDOWN_MIN, BOT_STOMP_COOLDOWN_RANGE,
+  STOMP_AOE_RADIUS,
 } from '../shared/constants.js';
 
 let nextBotId = 0;
@@ -75,6 +76,7 @@ export class HouseBot {
     const events = [{ type: 'bot_stomp', botId: this.id, x: this.x, y: this.y }];
     const hitW = BOT_WIDTH * 0.7;
     const hitH = BOT_HEIGHT * 0.7;
+    let directHitId = null; // track roach hit in direct phase to avoid AoE double-hit
 
     for (const roach of roaches) {
       if (roach.isDead) continue;
@@ -84,6 +86,7 @@ export class HouseBot {
       const inY = cy >= this.y - hitH / 2 && cy <= this.y + hitH / 2;
 
       if (inX && inY) {
+        directHitId = roach.id;
         const killed = roach.hit();
         if (killed) {
           const lost = roach.balance * 0.9;
@@ -111,15 +114,31 @@ export class HouseBot {
       }
     }
 
-    // Scatter nearby
+    // AoE gradient: closer = higher chance of taking damage
     for (const roach of roaches) {
-      if (roach.isDead) continue;
+      if (roach.isDead || roach.id === directHitId) continue;
       const cx = roach.x + ROACH_WIDTH / 2;
       const cy = roach.y + ROACH_HEIGHT / 2;
       const dx = cx - this.x;
       const dy = cy - this.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 80 && dist > 30) {
+
+      if (dist < STOMP_AOE_RADIUS && dist > 15) {
+        // Gradient: 80% hit chance at center, 10% at edge
+        const hitChance = 0.8 * (1 - dist / STOMP_AOE_RADIUS);
+        if (Math.random() < hitChance) {
+          const killed = roach.hit();
+          if (killed) {
+            const lost = roach.balance * 0.9;
+            roach.balance *= 0.1;
+            roach.die();
+            events.push({ type: 'bot_kill', botId: this.id, victimId: roach.id, lost, x: roach.x, y: roach.y });
+          } else {
+            events.push({ type: 'bot_hit', botId: this.id, victimId: roach.id, hp: roach.hp, x: this.x, y: this.y });
+          }
+        }
+        roach.scatter(this.x, this.y);
+      } else if (dist < 100 && dist > 15) {
         roach.scatter(this.x, this.y);
       }
     }

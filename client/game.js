@@ -51,6 +51,7 @@ const timerCountdown = document.getElementById('timer-countdown');
 const timerRoom = document.getElementById('timer-room');
 const timerEl = document.getElementById('motel-timer');
 const statusEl = document.getElementById('connection-status');
+const balanceEl = document.getElementById('balance');
 
 // ==================== NETWORK ====================
 let ws = null;
@@ -183,12 +184,13 @@ function handleEvent(evt) {
       if (evt.stomperId === myId) {
         kills++;
         log(`<span class="kill">KILLED roach!</span> <span class="money">+$${evt.reward.toFixed(2)}</span>`);
+        showCoinShower(evt.x, evt.y, evt.reward);
       }
       showSplat(evt.x, evt.y);
       break;
     case 'stomp_hit':
       if (evt.victimId === myId) {
-        log(`<span class="death">You got stomped! (${evt.hp}/3 HP)</span>`);
+        log(`<span class="death">You got stomped! (${evt.hp}/2 HP)</span>`);
       }
       break;
     case 'stomp_miss':
@@ -206,7 +208,7 @@ function handleEvent(evt) {
       break;
     case 'bot_hit':
       if (evt.victimId === myId) {
-        log(`<span class="death">House bot hit you! (${evt.hp}/3 HP)</span>`);
+        log(`<span class="death">House bot hit you! (${evt.hp}/2 HP)</span>`);
       }
       break;
     case 'player_death':
@@ -522,18 +524,168 @@ function triggerBotStomp(botId) {
   const entry = botEls.get(botId);
   if (!entry) return;
   entry.el.classList.remove('stomping');
-  void entry.el.offsetWidth; // force reflow to restart animation
+  void entry.el.offsetWidth;
   entry.el.classList.add('stomping');
-  setTimeout(() => entry.el.classList.remove('stomping'), 200);
+  setTimeout(() => entry.el.classList.remove('stomping'), 250);
+  // Shockwave + screen shake for bot stomps
+  showShockwave(entry.data.x, entry.data.y);
+  shakeScreen();
 }
 
 function showSplat(x, y) {
   const splat = document.createElement('div');
   splat.className = 'splat';
-  splat.style.left = (x - 20) + 'px';
-  splat.style.top = (y - 20) + 'px';
+  splat.style.left = (x - 25) + 'px';
+  splat.style.top = (y - 25) + 'px';
   container.appendChild(splat);
-  setTimeout(() => splat.remove(), 1000);
+  setTimeout(() => splat.remove(), 1200);
+}
+
+function showShockwave(x, y) {
+  const ring = document.createElement('div');
+  ring.className = 'shockwave';
+  ring.style.left = x + 'px';
+  ring.style.top = y + 'px';
+  container.appendChild(ring);
+  setTimeout(() => ring.remove(), 400);
+}
+
+function shakeScreen() {
+  container.classList.remove('shake');
+  void container.offsetWidth;
+  container.classList.add('shake');
+  setTimeout(() => container.classList.remove('shake'), 300);
+}
+
+let killCombo = 0;
+let comboTimer = null;
+
+function pulseBalance() {
+  balanceEl.classList.remove('collecting');
+  void balanceEl.offsetWidth;
+  balanceEl.classList.add('collecting');
+  setTimeout(() => balanceEl.classList.remove('collecting'), 360);
+}
+
+function flyToBalance(startX, startY, text, opts = {}) {
+  const targetRect = balanceEl.getBoundingClientRect();
+  const targetX = targetRect.left + targetRect.width / 2 + (opts.targetJitterX || 0);
+  const targetY = targetRect.top + targetRect.height / 2 + (opts.targetJitterY || 0);
+  const dx = targetX - startX;
+  const dy = targetY - startY;
+  const midUp = Math.min(-45, dy * 0.45 - 30) + (opts.arcJitter || 0);
+
+  const el = document.createElement('div');
+  el.className = `coin hud-fly${opts.big ? ' big' : ''}`;
+  el.textContent = text;
+  el.style.left = startX + 'px';
+  el.style.top = startY + 'px';
+  if (opts.fontSize) el.style.fontSize = opts.fontSize + 'px';
+  if (opts.color) el.style.color = opts.color;
+  document.body.appendChild(el);
+
+  const anim = el.animate([
+    { transform: 'translate(-50%, -50%) scale(1)', opacity: 1, offset: 0 },
+    { transform: `translate(calc(-50% + ${dx * 0.45}px), calc(-50% + ${midUp}px)) scale(1.05)`, opacity: 1, offset: 0.45 },
+    { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.55)`, opacity: 0.9, offset: 1 },
+  ], {
+    duration: opts.duration || 850,
+    delay: opts.delay || 0,
+    easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
+    fill: 'forwards',
+  });
+
+  anim.onfinish = () => {
+    el.remove();
+    if (opts.onArrive) opts.onArrive();
+  };
+}
+
+function showCoinShower(x, y, reward) {
+  // Track combo — kills within 1.5s multiply the shower
+  killCombo++;
+  if (comboTimer) clearTimeout(comboTimer);
+  comboTimer = setTimeout(() => { killCombo = 0; }, 1500);
+
+  // More coins for bigger rewards and higher combos
+  const baseCoinCount = Math.max(3, Math.ceil(reward * 4));
+  const coinCount = Math.min(baseCoinCount * killCombo, 40);
+  const isBig = killCombo >= 3 || reward > 2;
+
+  for (let i = 0; i < coinCount; i++) {
+    const coin = document.createElement('div');
+    coin.className = 'coin' + (isBig ? ' big' : '');
+    coin.textContent = '$';
+
+    // Random spread
+    const angle = (Math.random() * Math.PI * 2);
+    const spread = 20 + Math.random() * 40 * killCombo;
+    const flyX = Math.cos(angle) * spread;
+    const flyY = -30 - Math.random() * 80 - killCombo * 15;
+    const duration = 0.6 + Math.random() * 0.6;
+
+    coin.style.left = (x + (Math.random() - 0.5) * 20) + 'px';
+    coin.style.top = (y + (Math.random() - 0.5) * 20) + 'px';
+    coin.style.fontSize = (10 + Math.random() * 6 + killCombo * 2) + 'px';
+    coin.style.setProperty('--fly-x', flyX + 'px');
+    coin.style.setProperty('--fly-y', flyY + 'px');
+    coin.style.setProperty('--fly-duration', duration + 's');
+    coin.style.animationDelay = (i * 0.02) + 's';
+
+    container.appendChild(coin);
+    setTimeout(() => coin.remove(), (duration + i * 0.02) * 1000 + 100);
+  }
+
+  // Show reward amount floating up
+  if (reward > 0.01) {
+    const label = document.createElement('div');
+    label.className = 'coin big';
+    label.textContent = '+$' + reward.toFixed(2);
+    label.style.left = (x - 20) + 'px';
+    label.style.top = (y - 10) + 'px';
+    label.style.fontSize = (14 + killCombo * 3) + 'px';
+    label.style.setProperty('--fly-x', '0px');
+    label.style.setProperty('--fly-y', '-60px');
+    label.style.setProperty('--fly-duration', '1.2s');
+    container.appendChild(label);
+    setTimeout(() => label.remove(), 1300);
+  }
+
+  // Also collect toward the top balance counter.
+  const containerRect = container.getBoundingClientRect();
+  const flyStartX = containerRect.left + x;
+  const flyStartY = containerRect.top + y;
+  const collectCount = Math.min(16, Math.max(6, Math.ceil(coinCount * 0.45)));
+
+  for (let i = 0; i < collectCount; i++) {
+    flyToBalance(
+      flyStartX + (Math.random() - 0.5) * 26,
+      flyStartY + (Math.random() - 0.5) * 26,
+      '$',
+      {
+        delay: i * 24,
+        duration: 700 + Math.random() * 350,
+        fontSize: 10 + Math.random() * 8 + killCombo,
+        targetJitterX: (Math.random() - 0.5) * 16,
+        targetJitterY: (Math.random() - 0.5) * 8,
+        arcJitter: (Math.random() - 0.5) * 20,
+        onArrive: i === collectCount - 1 ? pulseBalance : null,
+      }
+    );
+  }
+
+  if (reward > 0.01) {
+    flyToBalance(flyStartX, flyStartY - 8, '+$' + reward.toFixed(2), {
+      big: true,
+      delay: 120,
+      duration: 1000,
+      fontSize: 14 + killCombo * 2,
+      targetJitterX: 0,
+      targetJitterY: -2,
+      arcJitter: -20,
+      onArrive: pulseBalance,
+    });
+  }
 }
 
 function buildMinimap() {
@@ -588,10 +740,12 @@ container.addEventListener('click', (e) => {
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
 
-  // Optimistic boot animation
+  // Optimistic boot animation + impact effects
   boot.classList.remove('stomping');
   void boot.offsetWidth;
   boot.classList.add('stomping');
+  showShockwave(x, y - BOOT_HEIGHT * 0.3);
+  shakeScreen();
 
   send({ type: 'stomp', x, y, seq: inputSeq });
 });

@@ -27,8 +27,9 @@ const server = http.createServer((req, res) => {
     filePath = path.join(ROOT, 'client', req.url);
   }
 
-  // Prevent directory traversal
-  if (!filePath.startsWith(ROOT)) {
+  // Prevent directory traversal — must be under client/ (not just project root)
+  const CLIENT_DIR = path.join(ROOT, 'client');
+  if (!filePath.startsWith(CLIENT_DIR + path.sep) && filePath !== path.join(ROOT, 'shared', 'constants.js')) {
     res.writeHead(403);
     res.end('Forbidden');
     return;

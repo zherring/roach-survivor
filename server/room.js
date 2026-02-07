@@ -3,6 +3,7 @@ import {
   BOOT_WIDTH, BOOT_HEIGHT, MAX_ROACHES_PER_ROOM, INCOME_RATE,
   TICKS_PER_SEC, KILL_REWARD, DEATH_PENALTY, STOMP_COOLDOWN,
   BOTS_PER_WEALTH, MAX_BOTS_PER_ROOM, GRID_SIZE, MAX_HP, HEAL_COST,
+  STOMP_AOE_RADIUS,
 } from '../shared/constants.js';
 import { Roach } from './roach.js';
 import { HouseBot } from './house-bot.js';
@@ -120,6 +121,7 @@ export class Room {
     const bootTop = y - BOOT_HEIGHT * 0.8;
     const bootBottom = y + BOOT_HEIGHT * 0.2;
     let hitAny = false;
+    let directHitId = null; // track roach hit in direct phase to avoid AoE double-hit
 
     for (const roach of this.roaches) {
       if (roach.id === playerId || roach.isDead) continue;
@@ -128,6 +130,7 @@ export class Room {
       const cy = roach.y + ROACH_HEIGHT / 2;
       if (cx >= bootLeft && cx <= bootRight && cy >= bootTop && cy <= bootBottom) {
         hitAny = true;
+        directHitId = roach.id;
         const killed = roach.hit();
 
         if (killed) {
@@ -181,19 +184,52 @@ export class Room {
       }
     }
 
-    if (!hitAny) {
-      // Scatter nearby
-      const bootCenterX = x;
-      const bootCenterY = y - BOOT_HEIGHT * 0.3;
-      for (const roach of this.roaches) {
-        if (roach.isDead) continue;
-        const dx = (roach.x + ROACH_WIDTH / 2) - bootCenterX;
-        const dy = (roach.y + ROACH_HEIGHT / 2) - bootCenterY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 80) {
-          roach.scatter(bootCenterX, bootCenterY);
+    // AoE gradient: closer to impact = higher chance of splash damage
+    const bootCenterX = x;
+    const bootCenterY = y - BOOT_HEIGHT * 0.3;
+    const stomper = this.roaches.find(r => r.id === playerId);
+
+    for (const roach of this.roaches) {
+      if (roach.id === playerId || roach.isDead || roach.id === directHitId) continue;
+      const dx = (roach.x + ROACH_WIDTH / 2) - bootCenterX;
+      const dy = (roach.y + ROACH_HEIGHT / 2) - bootCenterY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < STOMP_AOE_RADIUS) {
+        // Gradient: 70% hit chance at center, fading to 0% at edge
+        const hitChance = 0.7 * (1 - dist / STOMP_AOE_RADIUS);
+        if (Math.random() < hitChance) {
+          const killed = roach.hit();
+          if (killed) {
+            const reward = roach.balance * KILL_REWARD;
+            if (stomper) stomper.balance += reward;
+            roach.die();
+            events.push({ type: 'stomp_kill', stomperId: playerId, victimId: roach.id, reward, x: roach.x, y: roach.y });
+
+            if (!roach.isPlayer) {
+              setTimeout(() => {
+                const idx = this.roaches.indexOf(roach);
+                if (idx > -1) this.roaches.splice(idx, 1);
+                setTimeout(() => {
+                  if (this.roaches.filter(r => !r.isPlayer).length < MAX_ROACHES_PER_ROOM) {
+                    this.roaches.push(new Roach(false, Math.random() * 3));
+                  }
+                }, 5000 + Math.random() * 5000);
+              }, 500);
+            } else {
+              roach.balance *= (1 - DEATH_PENALTY);
+              setTimeout(() => roach.respawn(), 500);
+              events.push({ type: 'player_death', victimId: roach.id, killerId: playerId, lost: reward });
+            }
+          }
         }
+        roach.scatter(bootCenterX, bootCenterY);
+      } else if (dist < 100) {
+        roach.scatter(bootCenterX, bootCenterY);
       }
+    }
+
+    if (!hitAny) {
       events.push({ type: 'stomp_miss', stomperId: playerId, x, y });
     }
 

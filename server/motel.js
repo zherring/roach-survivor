@@ -10,7 +10,7 @@ export class Motel {
     this.x = 0;
     this.y = 0;
     this.active = false;
-    this.nextSpawnTime = Date.now() + 5000; // first spawn in 5s
+    this.nextSpawnTime = Date.now(); // spawn immediately on server start
     this.despawnTime = 0;
     // Track saving progress per player: playerId -> seconds accumulated
     this.savingProgress = new Map();
@@ -20,7 +20,7 @@ export class Motel {
     if (this.active) {
       if (now >= this.despawnTime) {
         this.despawn();
-        return [];
+        this.spawn(rooms); // keep a motel active at all times
       }
     } else {
       if (now >= this.nextSpawnTime) {
@@ -58,6 +58,7 @@ export class Motel {
           });
           this.savingProgress.delete(player.id);
           this.despawn();
+          this.spawn(rooms); // instantly relocate after a successful bank
           return events;
         }
       } else {
@@ -75,6 +76,7 @@ export class Motel {
   spawn(rooms) {
     // Pick random room from available rooms
     const roomKeys = Array.from(rooms.keys());
+    if (roomKeys.length === 0) return;
     this.room = roomKeys[Math.floor(Math.random() * roomKeys.length)];
     this.x = 150 + Math.random() * 300;
     this.y = 80 + Math.random() * 200;
