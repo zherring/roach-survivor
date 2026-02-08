@@ -1,188 +1,278 @@
-# $ROACH Multiplayer Architecture (Draft)
+# $ROACH Multiplayer Architecture
 
-This document proposes a production architecture for the $ROACH game described in `PRD-ROACH-GAME.md`. It focuses on a shared, authoritative game engine with real-time state across all browsers, plus onchain payments for minting and in-game purchases. It is intentionally pragmatic: small-team friendly, deployable quickly, and scalable as traction grows.
+This document started as a proposal (see git history for the original draft). It now reflects what was actually built and the key decisions that diverged from the initial plan.
 
-## Goals
-- Shared, authoritative game state across all connected players.
-- Real-time multiplayer with low latency for stomps and movement.
-- Crypto payments for minting roaches and spending $ROACH.
-- Mobile-friendly web client that can be embedded/shared (e.g., FC).
-- Operable by a small team; minimal infrastructure overhead.
+---
 
-## Non-Goals (for v1)
-- Fully trustless gameplay or onchain game state.
-- Automated withdrawals (manual EOW is acceptable).
-- Complex NFT trait pipelines or large-scale onchain metadata.
+## Part 1: Architecture — What We Built vs. What Was Proposed
 
-## Assumptions
-- "FC" refers to Farcaster distribution.
-- "Base" refers to the Base app (including its mini-app surface).
-- $ROACH will likely be a Clanker coin; 90% reserved for the game and distributed weekly.
-- Minting is offchain initially; NFT airdrop may happen later.
-- Onchain payments are limited to $1 withdrawals from user wallets (Base).
-- $ROACH is represented as an internal game balance; onchain settlement is not part of v1 gameplay.
+### Stack Decision
+- **Proposed:** "Node/TS vs Go/Rust" — open question
+- **Built:** Node.js (vanilla JS, no TypeScript), `ws` as sole dependency. Zero build step. `import.meta.dirname` (Node 24). Single process serves HTTP + WebSocket.
 
-## High-Level Architecture
-- **Client (Web)**: Canvas-based game client, input capture, local prediction, UI, wallet connect.
-- **Game Server (Authoritative)**: Single source of truth for rooms, roaches, stomps, bots, economy.
-- **Realtime Transport**: WebSocket-based state deltas and input events.
-- **Payments/Indexer**: Watches onchain events and credits player accounts.
-- **Persistence**: Minimal state persistence (accounts, balances, upgrades, banked $ROACH).
-- **Admin Console**: Manual withdrawal workflow and ops controls.
-- **Room Grid (v1)**: 3x3 rooms (expandable later).
+### Client Architecture
+- **Proposed:** "Canvas-based game client"
+- **Built:** DOM-based rendering (div elements with CSS sprites, transforms, filters). No `<canvas>`. This was a deliberate choice — DOM gives us CSS animations (splats, shockwaves, coin showers) for free and sprite tinting via CSS filters. Performance is fine at the current entity count.
 
-## Key Principles
-- **Server-authoritative simulation**: Clients send inputs, server resolves stomps and state changes.
-- **Deterministic ticks**: Fixed simulation tick (e.g., 20–30 TPS) for consistency.
-- **State deltas**: Broadcast small diffs vs. full state each frame.
-- **Room sharding**: Each room is independent for scale; shard by room key.
+### Movement & Prediction Model
+- **Proposed:** "Clients send inputs, server resolves"
+- **Built (after iteration):** **Client-authoritative movement** with server validation. Client applies WASD + drunk steering locally, sends position/velocity to server every 50ms. Server validates speed (clamps to `getSpeed() * 1.5`) and position distance (clamps jumps to `maxSpeed * 10`). Server only overrides on >50px error (respawn/teleport). This was changed from server-authoritative after the initial implementation felt janky — random drunk steering on server diverged from client's random values, causing constant reconciliation snaps.
 
-## Core Components
+### Combat & Economy
+- **Proposed:** Server-authoritative stomps, 90% death penalty
+- **Built:** Exactly as proposed, plus:
+  - AoE gradient damage (probability falloff from stomp center, 60px radius)
+  - HP reduced to 2 (was 3 in PRD)
+  - House bots have wealth-weighted targeting (`weight = balance + 0.1`)
+  - Bot pursuit speed scales with target wealth (`3 + min(balance * 0.15, 2)`)
+  - Combo kill VFX system (coin shower scales with consecutive kills within 1.5s)
 
-### 1) Web Client
-Responsibilities:
-- Input capture (WASD/joystick, tap/click)
-- Local prediction for movement and boot visuals
-- Receives state deltas (positions, HP, balances, bots)
-- Renders sprites, minimap, motel timers, indicators
-- Wallet connection for payments (Base)
- - Surfaces "play without minting" and "mint to own" UX
+### Room Grid
+- **Proposed:** 3x3 for v1 (expandable to 10x10)
+- **Built:** 3x3. Each room runs independently with own roach array, bot array. Transitions detected by edge crossing (`x < -5` or `x > 605`, etc).
 
-Notes:
-- Client should not be trusted for hits, damage, balances, or room transitions.
-- Prediction should be corrected with server reconciliation.
+### Motel Banking
+- **Proposed:** Spawn every 15s, stay 10s, 5s to bank
+- **Built:** Always active (0s spawn interval), stays 12s before relocating, 2s to bank. Much more accessible — banking is a constant strategic option, not a rare event.
 
-### 2) Game Server (Authoritative Engine)
-Responsibilities:
-- Tick loop for each room shard
-- Resolve stomps, hits, deaths, respawns, motel banking
-- Apply rubber-band speed and wealth scaling
-- Spawn/despawn house bots based on room wealth
-- Enforce rate-of-fire, miss penalties, and hitboxes
-- Maintain player sessions and room membership
- - Track unowned vs owned balances until a roach is minted
+### Protocol
+- **Proposed:** `input.move`, `state.delta`, etc.
+- **Built:** Simpler flat types:
 
-Suggested structure:
-- **RoomManager**: Creates, destroys, and ticks rooms.
-- **Room**: Holds roaches, bots, motel state, per-room economy.
-- **Simulation**: Deterministic step with a fixed delta (e.g., 50ms).
-- **EventBus**: Internal events (death, stomp, banked, mint).
+| Direction | Messages |
+|-----------|----------|
+| Client → Server | `input` (position+velocity), `stomp` (x,y), `heal` |
+| Server → Client | `welcome` (full state), `tick` (room snapshot + events + personal state), `room_enter` (new room snapshot) |
 
-### 3) Realtime Transport
-Responsibilities:
-- Low-latency bi-directional data (WebSockets)
-- Input events from clients (move, stomp, heal, bank)
-- State delta updates to clients (positions, hp, balances)
-- Presence tracking and reconnect handling
+**Key difference from proposal:** We send full room snapshots per tick, not deltas. At 20 TPS with ~20 entities per room, the JSON is small enough that delta compression isn't worth the complexity yet.
 
-Message types (examples):
-- `input.move`, `input.stomp`, `input.heal`, `input.bank`
-- `state.delta`, `state.snapshot`, `event.death`, `event.motel`
+### What's NOT Built Yet
 
-### 4) Payments + Indexing
-Responsibilities:
-- Watch onchain $1 withdrawal events (Base)
-- Credit player account balances/upgrades after mint
-- Prevent duplicate credits (idempotent)
-- Optionally allow anonymous minting tied to session
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Payments/Indexer | Not started | No crypto integration yet |
+| Persistence Layer | Not started | All state in-memory, lost on restart |
+| Admin Console | Not started | No ops tooling |
+| Wallet Connect | Not started | No auth at all — anonymous sessions |
+| State Deltas | Skipped | Full snapshots instead (simpler, works fine) |
+| Reconnect Handling | Not started | Disconnect = player removed |
+| Room Sharding (multi-process) | Not started | Single process handles all rooms |
 
-Flow:
-1) Player initiates mint (offchain) or withdrawal (onchain).
-2) Onchain transaction confirmed (Base $1 withdraw).
-3) Indexer sees event and credits the player.
-4) Game server syncs account balance and unlocks roach ownership.
+### Current File Map
 
-### 4b) Treasury + Weekly Distribution (Clanker)
-Responsibilities:
-- Track the game-reserved 90% allocation of $ROACH.
-- Distribute rewards on a weekly cadence (offchain ledger or onchain batch).
-- Provide admin auditability for weekly payouts.
+```
+kyiv/
+├── server/
+│   ├── index.js           # HTTP static server + WebSocket setup (77 lines)
+│   ├── game-server.js     # Tick loop, sessions, room transitions (229 lines)
+│   ├── room.js            # Per-room sim: physics, stomps, AoE, spawns (263 lines)
+│   ├── roach.js           # Entity: movement, speed calc, hit/die (157 lines)
+│   ├── house-bot.js       # Bot AI: targeting, pursuit, AoE stomp (156 lines)
+│   └── motel.js           # Banking: spawn/despawn, collision, progress (109 lines)
+├── client/
+│   ├── index.html         # Full UI + CSS (471 lines)
+│   ├── game.js            # Network, prediction, rendering, VFX (793 lines)
+│   └── assets/
+│       ├── game-sprite.png
+│       └── roach-motel-sprite.jpeg
+├── shared/
+│   └── constants.js       # All tuning values (41 lines)
+├── package.json           # ws dependency, "start" script
+└── AGENT-IMPLEMENTATION.md # Agent API plan (not built yet)
+```
 
-### 5) Persistence Layer
-Data to persist:
-- Accounts (wallet address, display name, session metadata)
-- Player upgrades (permanent)
-- Banked $ROACH (safe balance)
-- Audit log for credits and withdrawals
+**Total: ~2,200 lines of game code.** Single dependency (`ws`).
 
-Not persisted (live-only):
-- Moment-to-moment room state (positions, HP) to reduce writes.
+### Current Game Constants (tuned through playtesting)
 
-### 6) Admin Console
-Responsibilities:
-- View balances, banked $ROACH, recent deaths, mint events
-- Manual withdrawal tooling (EOW)
-- Emergency controls (pause rooms, scale bots)
+| Constant | Value | Why |
+|----------|-------|-----|
+| TICK_RATE | 50ms (20 TPS) | Balance of smoothness vs bandwidth |
+| MAX_HP | 2 | Fast kills = more action |
+| DEATH_PENALTY | 90% | High stakes |
+| KILL_REWARD | 90% | Stomping is lucrative |
+| INCOME_RATE | $0.01/sec | Slow passive accumulation |
+| PLAYER_BASE_SPEED | 2.5 | Feels responsive with drunk steering |
+| WEALTH_SPEED_PENALTY_MAX | 1.5 | Rich roaches noticeably slower |
+| STOMP_AOE_RADIUS | 60px | Meaningful splash zone |
+| BOTS_PER_WEALTH | $5 | Aggressive bot scaling |
+| MAX_BOTS_PER_ROOM | 8 | Can get very dangerous |
+| BOT_STOMP_COOLDOWN | 600-900ms | Fast bot attacks |
+| MOTEL_SAVE_TIME | 2s | Quick banking |
+| MOTEL_STAY_DURATION | 12s | Always a motel somewhere |
 
-## Data Model (Minimal)
-- `Account`: id, wallet, created_at
-- `Profile`: account_id, display_name
-- `Balance`: account_id, banked_roach, spendable_roach, unowned_roach
-- `Upgrade`: account_id, boot_size, multi_stomp, rate_of_fire
-- `PaymentEvent`: tx_hash, account_id, amount, credited_at
-- `Withdrawal`: account_id, amount, status, requested_at, processed_at
-- `Distribution`: period_start, period_end, amount, status, processed_at
+---
 
-## Ownership & Economy Rules (Clarified)
-- Players can stomp and earn while unminted; earnings are recorded as `unowned_roach`.
-- Unowned earnings are not withdrawable or bankable until a mint occurs.
-- Once a player mints, `unowned_roach` is promoted to spendable/banked based on game rules.
-- If an unminted player stomps another roach, the purchase reward routes to the house.
+## Part 2: Milestone Roadmap (M1-M8)
 
-## Game Loop (Authoritative)
-1) Receive inputs for the tick window.
-2) Apply movement with rubber-band modifier.
-3) Resolve stomps vs hitboxes.
-4) Apply HP changes, death penalty, respawn timers.
-5) Update economy (passive income, motel banking).
-6) Spawn/despawn bots based on room wealth.
-7) Emit state delta to connected clients.
+### M1: Deploy & Share
+**Goal:** Shareable URL — anyone with the link plays instantly.
+**Effort:** 30 minutes
+**Blocked by:** Nothing
 
-## Anti-Cheat Baseline
-- Server authority on all combat/economy.
-- Input validation: max move speed, stomp rate, input frequency.
-- Room transition rules enforced on server.
-- Optionally throttle anonymous inputs per IP/session.
+What to do:
+- Deploy to Railway (`railway up` or connect GitHub repo)
+- Railway auto-detects Node via `package.json`, uses `npm start` → `node server/index.js`
+- PORT comes from `process.env.PORT` (already handled)
+- WebSocket upgrades work on Railway out of the box
+- Verify: open on phone + laptop simultaneously, confirm multiplayer works
 
-## Scaling Strategy
-Phase 1 (MVP):
-- Single game server instance.
-- All rooms in-memory.
-- WebSockets handled by the same node process.
+**Why first:** Everything else is pointless if nobody can play it. This is the lowest-effort, highest-leverage step.
 
-Phase 2 (Growth):
-- Multiple game server instances with room sharding.
-- Shared presence registry (Redis) for routing.
-- Payment/indexer as separate service.
+---
 
-Phase 3 (Scale):
-- Horizontal room shards with consistent hashing.
-- Read replicas for analytics and leaderboards.
-- Edge caching for assets and client bundles.
+### M2: Visual Polish — Prototype Feature Parity
+**Goal:** Match the single-player prototype's visual richness in multiplayer.
+**Effort:** Half day
+**Blocked by:** Nothing
 
-## Deployment Notes
-- Deploy as a web app + game server + indexer service.
-- Use HTTPS + secure WebSockets (WSS).
-- Use a CDN for assets (sprites, audio).
-- Base chain RPC provider for indexing.
- - Node/TS stack for the server and indexer.
+What to build:
+1. **Roach scaling with wealth** — CSS `transform: scale()` based on balance (1x at $0, up to 3x at $50+). Already in the prototype, just needs porting to the multiplayer renderer.
+2. **Roach rotation** — face movement direction via `Math.atan2(vy, vx)` → CSS rotate. Already in prototype.
+3. **Other players' boot cursors visible** — server broadcasts each player's cursor position, other clients render a semi-transparent boot. Needs new message field in `input` (cursor x,y) and render logic.
+4. **NPC/player roaches flee from player boots** — currently they only flee house bots. Add player cursor positions to the flee calculation in `server/roach.js`.
 
-## Open Questions
-- Exact chain/payment provider for Base and wallet UX.
-- How anonymous sessions map to wallets after minting.
-- Timelock withdrawal flow (duration and UI).
-- Handling abuse (botting, multi-account farming).
+Files: `client/game.js` (render scaling/rotation/other boots), `server/game-server.js` (broadcast cursor positions), `server/roach.js` (flee from player cursors)
 
-## Suggested MVP Cut (v1)
-- Authoritative server + WebSocket transport
-- One room shard (3x3)
-- Minting offchain with Base $1 withdrawal event
-- Play-before-mint flow with `unowned_roach`
-- Manual withdrawals via admin console
-- No NFTs, no onchain roach state
+**Why second:** These are the most visible "this feels like a real game" improvements. Roaches that grow fat and slow as they get rich is a core part of the game's visual storytelling.
 
-## Next Steps
-- Pick stack (Node/TS vs Go/Rust) for server tick loop.
-- Define protocol schema (message formats).
-- Implement minimal indexer for Base mint events.
-- Build admin console for withdrawals and ops.
+---
+
+### M3: Sound Design
+**Goal:** Audio feedback for all major actions — stomp, kill, coin, bot, motel.
+**Effort:** Half day
+**Blocked by:** Nothing (can parallelize with M2)
+
+What to build:
+1. Web Audio API sound system (small AudioContext manager)
+2. Sound effects: stomp impact (hit vs miss), death squelch, coin collect, bot stomp rumble, motel banking chime, ambient skittering
+3. Volume controls / mute button
+4. Generate or source 6-8 short sound clips (can use free SFX libraries or AI generation)
+
+Files: `client/game.js` (audio hookup), `client/assets/` (sound files), `client/index.html` (mute button)
+
+**Why third:** Sound is what makes the difference between "prototype" and "game". Stomping without a satisfying crunch feels hollow. This is high-impact for minimal code.
+
+---
+
+### M4: Mobile Touch Controls
+**Goal:** Playable on phones — huge for viral sharing.
+**Effort:** 1 day
+**Blocked by:** M1 (need deployment to test on real phones)
+
+What to build:
+1. **Virtual joystick** — touch drag in bottom-left for movement (maps to WASD forces)
+2. **Tap to stomp** — touch anywhere in game area to stomp at that position
+3. **Responsive layout** — game container scales to viewport width, stats bar wraps
+4. **Touch-friendly heal button** — larger hit target
+5. **Prevent default touch behaviors** — no scroll/zoom on game container
+
+Files: `client/game.js` (touch input handlers, joystick logic), `client/index.html` (responsive CSS, joystick element)
+
+**Why fourth:** Mobile is where viral sharing happens — someone sends a link in a group chat, everyone opens it on their phone. Without touch controls, that entire funnel is broken.
+
+---
+
+### M5: Persistence & Reconnection
+**Goal:** Banked balances survive server restarts. Players can reconnect after drops.
+**Effort:** 1 day
+**Blocked by:** M1 (need to know deploy environment for storage)
+
+What to build:
+1. **SQLite (or JSON file) persistence** for banked balances, player names, upgrade state
+2. **Session tokens** — localStorage on client, cookie or generated ID, maps to persistent player record
+3. **Reconnect logic** — client auto-reconnects on WebSocket close, sends session token, server restores player to their room with banked balance intact
+4. **Graceful shutdown** — server writes state to disk on SIGTERM (Railway sends this before restart)
+
+Files: new `server/db.js`, `server/game-server.js` (session restore, shutdown hook), `client/game.js` (reconnect loop, session storage)
+
+**Why fifth:** Once real players are playing (M1) and having fun (M2-M4), losing progress on server restart becomes the #1 frustration. This is the foundation for everything that follows (upgrades, leaderboards, crypto).
+
+---
+
+### M6: Permanent Upgrades
+**Goal:** Give players something to spend $ROACH on that persists across deaths.
+**Effort:** 1-2 days
+**Blocked by:** M5 (needs persistence)
+
+What to build:
+1. **Boot Size upgrade** — wider stomp hitbox (multiply BOOT_WIDTH/BOOT_HEIGHT by upgrade level)
+2. **Multi-stomp** — additional hit zones around main stomp point
+3. **Rate-of-fire** — lower STOMP_COOLDOWN per upgrade level
+4. **Upgrade shop UI** — panel showing available upgrades, costs, current levels
+5. **Server enforcement** — apply upgrade modifiers in `room.resolveStomp()`, validate on stomp cooldown
+6. **Visual indicators** — bigger boot for boot-size upgrade, multiple impact marks for multi-stomp
+
+Files: `server/game-server.js` (purchase handler), `server/room.js` (apply modifiers), `server/db.js` (persist upgrades), `client/game.js` (shop UI, visual changes)
+
+**Why sixth:** Upgrades create the spending imperative — the core economic tension. Right now there's nothing to do with money except bank it. Upgrades make the economy loop work: earn → spend on upgrades (safe) vs hoard (risky).
+
+---
+
+### M7: Agent API (MoltBots-style)
+**Goal:** AI agents can connect and play alongside humans.
+**Effort:** Half day
+**Blocked by:** Nothing (can be done anytime)
+
+What to build (documented in `AGENT-IMPLEMENTATION.md`):
+1. **Agent SDK** (`agent/sdk.js`) — WebSocket wrapper with `moveTo()`, `stomp()`, `heal()` methods
+2. **Example bot** (`agent/example-bot.js`) — hunts NPCs, flees bots, banks at motel
+3. **SKILL.md** — LLM-readable game description for MoltBots/OpenClaw integration
+4. **Agent identification** — `{ type: 'identify', agent: true }` message, different color tint in UI
+
+**No server changes needed** for basic agent support — the WebSocket protocol works as-is for any client.
+
+Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent flag)
+
+**Why seventh:** The protocol is already agent-friendly. This is mostly a packaging/documentation exercise. Cool demo potential but doesn't affect core gameplay.
+
+---
+
+### M8: Crypto Integration
+**Goal:** Real $ROACH token economy on Base chain.
+**Effort:** Multiple days, separate workstream
+**Blocked by:** M5 (persistence), M6 (upgrades — need something to spend on)
+
+What to build:
+1. **Vibecoins/Clanker token deployment** — $ROACH on Base
+2. **Minting flow** — offchain mint triggered by Base $1 payment
+3. **Withdrawal timelock** — request withdrawal, roach must survive N minutes while pending
+4. **Payment indexer** — watch Base chain for mint/withdraw transactions, credit accounts
+5. **Admin console** — view balances, process manual withdrawals, emergency controls
+6. **Wallet connect** — browser wallet integration for Base
+
+Files: new `server/indexer.js`, new `server/admin.js`, `client/game.js` (wallet UI), `server/game-server.js` (withdrawal timer logic)
+
+**Why last:** This is the biggest lift, needs the most infrastructure, and only matters once you have real players engaged. The game needs to be fun and sticky first. Crypto is the monetization layer, not the fun layer.
+
+---
+
+## Part 3: Recommendations
+
+### Priority Order
+```
+M1 (Deploy) → M2 (Visual) → M3 (Sound) → M4 (Mobile)
+    ↓
+"Shareable, impressive, playable everywhere"
+    ↓
+M5 (Persistence) → M6 (Upgrades) → M7 (Agents) → M8 (Crypto)
+    ↓
+"Sticky, economic, expandable"
+```
+
+### What to Skip or Defer
+- **10x10 grid** — 3x3 is fine until you have 50+ concurrent players. More rooms = more empty rooms.
+- **State deltas** — full snapshots work. Only optimize if bandwidth becomes an issue.
+- **TypeScript migration** — not worth the friction for the current codebase size (~2200 lines). Revisit if it grows past 5k.
+- **Multi-process sharding** — single process handles hundreds of players. Only shard if you hit CPU limits.
+
+### What to Watch For
+- **Movement feel on real networks** — the client-authoritative model feels great on localhost but needs testing with 50-100ms latency. May need to tune the 50px reconciliation threshold.
+- **Bot difficulty scaling** — with 8 max bots and 2 HP, rooms can become kill zones. May need to cap AoE or add bot flee behavior.
+- **Motel balance** — 2s banking is very fast. If money accumulates too easily, the death penalty loses its sting. Monitor average banked balances.
+
+### Quick Wins Not in the Milestones
+- **Player count indicator** — show "X players online" (already have the data, just need UI)
+- **Kill feed** — show "[Player] killed [Player]" visible to all players in room
+- **Leaderboard** — simple in-memory top-10 by banked balance, displayed on connection screen
+- **Spectator mode** — WebSocket connection that receives ticks but can't send input (trivial)
