@@ -1,11 +1,14 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { GameServer } from './game-server.js';
 
 const PORT = process.env.PORT || 3000;
-const ROOT = path.resolve(import.meta.dirname, '..');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT = path.resolve(__dirname, '..');
 
 const MIME = {
   '.html': 'text/html',

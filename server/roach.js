@@ -50,7 +50,7 @@ export class Roach {
     const dx = clampedX - this.x;
     const dy = clampedY - this.y;
     const posDist = Math.sqrt(dx * dx + dy * dy);
-    const maxDist = maxSpeed * 3; // generous tolerance (a few ticks worth)
+    const maxDist = maxSpeed * 10; // generous tolerance — client runs at 60fps, scatter/flee can spike
     if (posDist > maxDist) {
       // Clamp to max allowed distance in the reported direction
       this.x += (dx / posDist) * maxDist;
