@@ -40,7 +40,7 @@ export class Room {
     }
   }
 
-  simulate(now) {
+  simulate(now, cursors = []) {
     const events = [];
     const dt = 1 / TICKS_PER_SEC;
 
@@ -51,7 +51,7 @@ export class Room {
 
     // Update all roaches
     for (const roach of this.roaches) {
-      roach.update(dt, this.houseBots);
+      roach.update(dt, this.houseBots, cursors);
     }
 
     // Process player stomps

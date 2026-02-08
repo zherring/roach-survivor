@@ -21,6 +21,7 @@ let lastAliveReset = Date.now();
 const roachEls = new Map();
 const botEls = new Map();
 const nameEls = new Map();
+const otherBootEls = new Map();
 
 // Prediction state
 let inputSeq = 0;
@@ -37,6 +38,9 @@ let motelProgress = 0;
 let lastCountdownNum = 0;
 let savingCountdownEl = null;
 
+// Track successful server-side heals so respawns do not trigger heal VFX
+let lastHealCount = 0;
+
 // Input
 const keys = { w: false, a: false, s: false, d: false };
 let mouseX = 0, mouseY = 0, mouseInContainer = false;
@@ -44,7 +48,21 @@ let bootTilt = 0, prevMouseX = 0;
 
 // DOM refs
 const container = document.getElementById('game-container');
+const wrapper = document.getElementById('game-wrapper');
 const boot = document.getElementById('boot');
+
+// Responsive scaling
+let scaleFactor = 1;
+function updateScale() {
+  const isMobile = window.innerWidth <= 640;
+  const availWidth = isMobile ? window.innerWidth : Math.min(document.body.clientWidth - 10, CONTAINER_WIDTH);
+  scaleFactor = availWidth / CONTAINER_WIDTH;
+  container.style.setProperty('--game-scale', scaleFactor);
+  wrapper.style.width = (CONTAINER_WIDTH * scaleFactor) + 'px';
+  wrapper.style.height = (CONTAINER_HEIGHT * scaleFactor) + 'px';
+}
+window.addEventListener('resize', updateScale);
+updateScale();
 const playerArrow = document.getElementById('player-arrow');
 const motelEl = document.getElementById('roach-motel');
 const timerCountdown = document.getElementById('timer-countdown');
@@ -52,6 +70,16 @@ const timerRoom = document.getElementById('timer-room');
 const timerEl = document.getElementById('motel-timer');
 const statusEl = document.getElementById('connection-status');
 const balanceEl = document.getElementById('balance');
+const bankedEl = document.getElementById('banked');
+const mobileBalanceEl = document.getElementById('m-balance');
+const mobileBankedEl = document.getElementById('m-banked');
+
+function getVisibleStatEl(desktopEl, mobileEl) {
+  if (window.innerWidth <= 640 && mobileEl && mobileEl.getClientRects().length > 0) {
+    return mobileEl;
+  }
+  return desktopEl;
+}
 
 // ==================== NETWORK ====================
 let ws = null;
@@ -95,6 +123,7 @@ function handleMessage(msg) {
     case 'welcome':
       myId = msg.id;
       myName = msg.name;
+      lastHealCount = 0;
       currentRoom = msg.room;
       gridSize = msg.gridSize || GRID_SIZE;
       buildMinimap();
@@ -126,6 +155,12 @@ function handleTick(msg) {
     balance = msg.you.balance;
     bankedBalance = msg.you.banked;
     lastServerSeq = msg.you.lastInputSeq;
+    if (Number.isFinite(msg.you.healCount)) {
+      if (msg.you.healCount > lastHealCount) {
+        showHealEffect();
+      }
+      lastHealCount = msg.you.healCount;
+    }
   }
 
   // Reconcile prediction
@@ -171,6 +206,29 @@ function handleTick(msg) {
   if (msg.events) {
     for (const evt of msg.events) {
       handleEvent(evt);
+    }
+  }
+
+  // Update other players' boot cursors
+  const seenCursorIds = new Set();
+  if (msg.cursors) {
+    for (const c of msg.cursors) {
+      seenCursorIds.add(c.id);
+      let bootEl = otherBootEls.get(c.id);
+      if (!bootEl) {
+        bootEl = document.createElement('div');
+        bootEl.className = 'boot other-boot hovering';
+        container.appendChild(bootEl);
+        otherBootEls.set(c.id, bootEl);
+      }
+      bootEl.style.left = c.x + 'px';
+      bootEl.style.top = c.y + 'px';
+    }
+  }
+  for (const [cid, el] of otherBootEls) {
+    if (!seenCursorIds.has(cid)) {
+      el.remove();
+      otherBootEls.delete(cid);
     }
   }
 
@@ -223,6 +281,7 @@ function handleEvent(evt) {
     case 'bank':
       if (evt.playerId === myId) {
         log(`<span style="color:#f0c040">BANKED $${evt.amount.toFixed(2)}! Total: $${evt.totalBanked.toFixed(2)}</span>`);
+        showBankEffect(evt.amount, evt.totalBanked);
       }
       break;
     case 'bank_cancel':
@@ -280,7 +339,7 @@ function updateBotEl(data) {
     const el = document.createElement('div');
     el.className = 'house-bot';
     container.appendChild(el);
-    entry = { el, data, prevX: data.x, prevY: data.y, prevTime: Date.now() };
+    entry = { el, data, prevX: data.x, prevY: data.y, prevTime: Date.now(), lastDrawX: data.x, lastAngle: 0 };
     botEls.set(data.id, entry);
   }
   entry.prevX = entry.data.x;
@@ -296,6 +355,8 @@ function clearEntities() {
   nameEls.clear();
   for (const [id, entry] of botEls) { entry.el.remove(); }
   botEls.clear();
+  for (const [id, el] of otherBootEls) { el.remove(); }
+  otherBootEls.clear();
 }
 
 function applySnapshot(snapshot) {
@@ -431,8 +492,16 @@ function render() {
     const alpha = Math.min(elapsed / TICK_RATE, 1.2);
     const drawX = entry.prevX + (entry.data.x - entry.prevX) * alpha;
     const drawY = entry.prevY + (entry.data.y - entry.prevY) * alpha;
+    // Tilt based on horizontal movement
+    const botDx = drawX - (entry.lastDrawX ?? drawX);
+    if (Math.abs(botDx) > 0.5) {
+      entry.lastAngle = Math.max(-20, Math.min(20, botDx * 8));
+    }
+    entry.lastDrawX = drawX;
+
     entry.el.style.left = (drawX - BOT_WIDTH / 2) + 'px';
     entry.el.style.top = (drawY - BOT_HEIGHT / 2) + 'px';
+    entry.el.style.transform = `rotate(${entry.lastAngle || 0}deg)`;
   }
 
   // Saving countdown
@@ -458,6 +527,11 @@ function render() {
 
 // ==================== MOTEL DISPLAY ====================
 function updateMotelDisplay() {
+  // Mobile motel info elements
+  const mmInfo = document.getElementById('mobile-motel-info');
+  const mmCountdown = document.getElementById('mm-motel-countdown');
+  const mmRoom = document.getElementById('mm-motel-room');
+
   if (motelData && motelData.active) {
     timerEl.classList.add('active');
     const remaining = Math.max(0, Math.ceil((motelData.despawnTime - Date.now()) / 1000));
@@ -474,20 +548,41 @@ function updateMotelDisplay() {
       timerRoom.classList.remove('here');
       motelEl.classList.add('hidden');
     }
+
+    // Mobile
+    if (mmInfo) {
+      mmInfo.classList.remove('inactive');
+      mmCountdown.textContent = remaining + 's';
+      if (motelData.room === currentRoom) {
+        mmRoom.textContent = '>>> HERE! <<<';
+        mmRoom.classList.add('here');
+      } else {
+        mmRoom.textContent = 'Room ' + motelData.room;
+        mmRoom.classList.remove('here');
+      }
+    }
   } else {
     timerEl.classList.remove('active');
     timerCountdown.textContent = '--';
     timerRoom.innerHTML = 'Spawning soon...';
     timerRoom.classList.remove('here');
     motelEl.classList.add('hidden');
+
+    // Mobile
+    if (mmInfo) {
+      mmInfo.classList.add('inactive');
+      mmCountdown.textContent = '--';
+      mmRoom.textContent = 'Spawning...';
+      mmRoom.classList.remove('here');
+    }
   }
 }
 
 // ==================== UI ====================
 function updateUI() {
   aliveTime = (Date.now() - lastAliveReset) / 1000;
-  document.getElementById('balance').textContent = balance.toFixed(2);
-  document.getElementById('banked').textContent = bankedBalance.toFixed(2);
+  balanceEl.textContent = balance.toFixed(2);
+  bankedEl.textContent = bankedBalance.toFixed(2);
   document.getElementById('alive-time').textContent = Math.floor(aliveTime) + 's';
   document.getElementById('kills').textContent = kills;
   document.getElementById('current-room').textContent = currentRoom;
@@ -499,11 +594,29 @@ function updateUI() {
 
   // Heal button
   const healBtn = document.getElementById('heal-btn');
-  healBtn.disabled = !myRoachData || myRoachData.hp >= MAX_HP || balance < HEAL_COST;
+  const healDisabled = !myRoachData || myRoachData.hp >= MAX_HP || balance < HEAL_COST;
+  healBtn.disabled = healDisabled;
 
-  // Minimap
+  // Mobile HUD
+  const mBalance = document.getElementById('m-balance');
+  if (mBalance) {
+    mBalance.textContent = balance.toFixed(2);
+    if (mobileBankedEl) mobileBankedEl.textContent = bankedBalance.toFixed(2);
+    document.getElementById('m-hp').textContent = myRoachData ? `${myRoachData.hp}/${MAX_HP}` : `?/${MAX_HP}`;
+    document.getElementById('m-kills').textContent = kills;
+    const mHealBtn = document.getElementById('mobile-heal-btn');
+    if (mHealBtn) mHealBtn.disabled = healDisabled;
+  }
+
+  // Minimap (desktop + mobile)
+  const motelRoom = motelData && motelData.active ? motelData.room : null;
   document.querySelectorAll('.room-cell').forEach(cell => {
     cell.classList.toggle('active', cell.dataset.room === currentRoom);
+    cell.classList.toggle('motel', cell.dataset.room === motelRoom);
+  });
+  document.querySelectorAll('.mm-cell').forEach(cell => {
+    cell.classList.toggle('active', cell.dataset.room === currentRoom);
+    cell.classList.toggle('motel', cell.dataset.room === motelRoom);
   });
 
   // Player count
@@ -560,6 +673,190 @@ function shakeScreen() {
 let killCombo = 0;
 let comboTimer = null;
 
+function showHealEffect() {
+  // Coins fly FROM balance display TO the player roach (reverse of earning)
+  const containerRect = container.getBoundingClientRect();
+  const sourceBalanceEl = getVisibleStatEl(balanceEl, mobileBalanceEl);
+  const balanceRect = sourceBalanceEl.getBoundingClientRect();
+  const startX = balanceRect.left + balanceRect.width / 2;
+  const startY = balanceRect.top + balanceRect.height / 2;
+
+  const coinCount = 8;
+  for (let i = 0; i < coinCount; i++) {
+    const targetX = containerRect.left + predictedX * scaleFactor + ROACH_WIDTH / 2 * scaleFactor;
+    const targetY = containerRect.top + predictedY * scaleFactor + ROACH_HEIGHT / 2 * scaleFactor;
+    const dx = targetX - startX;
+    const dy = targetY - startY;
+    const midUp = Math.min(-30, dy * 0.3 - 20) + (Math.random() - 0.5) * 30;
+
+    const coin = document.createElement('div');
+    coin.className = 'coin hud-fly';
+    coin.textContent = '$';
+    coin.style.left = startX + 'px';
+    coin.style.top = startY + 'px';
+    coin.style.color = '#f44';
+    coin.style.fontSize = '12px';
+    document.body.appendChild(coin);
+
+    const delay = i * 40;
+    const anim = coin.animate([
+      { transform: 'translate(-50%, -50%) scale(1)', opacity: 1, offset: 0 },
+      { transform: `translate(calc(-50% + ${dx * 0.4 + (Math.random() - 0.5) * 40}px), calc(-50% + ${midUp}px)) scale(1.1)`, opacity: 1, offset: 0.4 },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.5)`, opacity: 0.8, offset: 1 },
+    ], { duration: 600, delay, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'forwards' });
+
+    anim.onfinish = () => coin.remove();
+  }
+
+  // Pulse balance red (spending)
+  sourceBalanceEl.style.color = '#f44';
+  setTimeout(() => { sourceBalanceEl.style.color = ''; }, 400);
+
+  // Green heal burst on roach after coins arrive
+  setTimeout(() => {
+    const burst = document.createElement('div');
+    burst.className = 'heal-burst';
+    burst.style.left = (predictedX + ROACH_WIDTH / 2 - 30) + 'px';
+    burst.style.top = (predictedY + ROACH_HEIGHT / 2 - 30) + 'px';
+    container.appendChild(burst);
+    setTimeout(() => burst.remove(), 600);
+
+    // Pulse HP text green
+    const hpEl = document.getElementById('player-hp');
+    hpEl.style.color = '#0f0';
+    hpEl.style.textShadow = '0 0 8px #0f0';
+    hpEl.style.transform = 'scale(1.5)';
+    hpEl.style.transition = 'all 0.15s ease-out';
+    setTimeout(() => {
+      hpEl.style.color = '';
+      hpEl.style.textShadow = '';
+      hpEl.style.transform = '';
+      hpEl.style.transition = 'all 0.3s ease-out';
+    }, 300);
+
+    log(`<span style="color:#0f0">Healed! -$${HEAL_COST}</span>`);
+  }, 350);
+}
+
+function showBankEffect(amount, total) {
+  // 1. Gold screen flash
+  const flash = document.createElement('div');
+  flash.className = 'bank-flash';
+  container.appendChild(flash);
+  setTimeout(() => flash.remove(), 800);
+
+  // 2. Big "BANKED!" text rising from player
+  const banner = document.createElement('div');
+  banner.className = 'bank-banner';
+  banner.innerHTML = `BANKED!<br><span style="font-size:0.6em">$${amount.toFixed(2)}</span>`;
+  banner.style.left = (predictedX + ROACH_WIDTH / 2) + 'px';
+  banner.style.top = (predictedY - 20) + 'px';
+  container.appendChild(banner);
+  setTimeout(() => banner.remove(), 2000);
+
+  // 3. Gold coin explosion — big radial burst from player
+  const cx = predictedX + ROACH_WIDTH / 2;
+  const cy = predictedY + ROACH_HEIGHT / 2;
+  const coinCount = Math.min(50, Math.max(20, Math.ceil(amount * 5)));
+  for (let i = 0; i < coinCount; i++) {
+    const coin = document.createElement('div');
+    coin.className = 'coin big';
+    coin.textContent = '$';
+    const angle = (i / coinCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+    const spread = 60 + Math.random() * 100;
+    const flyX = Math.cos(angle) * spread;
+    const flyY = Math.sin(angle) * spread - 30;
+    const dur = 0.8 + Math.random() * 0.6;
+    coin.style.left = (cx + (Math.random() - 0.5) * 10) + 'px';
+    coin.style.top = (cy + (Math.random() - 0.5) * 10) + 'px';
+    coin.style.fontSize = (14 + Math.random() * 10) + 'px';
+    coin.style.color = '#ffd700';
+    coin.style.setProperty('--fly-x', flyX + 'px');
+    coin.style.setProperty('--fly-y', flyY + 'px');
+    coin.style.setProperty('--fly-duration', dur + 's');
+    coin.style.animationDelay = (i * 0.015) + 's';
+    container.appendChild(coin);
+    setTimeout(() => coin.remove(), (dur + i * 0.015) * 1000 + 100);
+  }
+
+  // 4. Gold shockwave rings (multiple, staggered)
+  for (let i = 0; i < 3; i++) {
+    setTimeout(() => {
+      const ring = document.createElement('div');
+      ring.className = 'bank-ring';
+      ring.style.left = cx + 'px';
+      ring.style.top = cy + 'px';
+      container.appendChild(ring);
+      setTimeout(() => ring.remove(), 700);
+    }, i * 150);
+  }
+
+  // 5. Shake screen (celebratory)
+  shakeScreen();
+
+  // 6. Fly coins to banked display
+  const containerRect = container.getBoundingClientRect();
+  const targetBankedEl = getVisibleStatEl(bankedEl, mobileBankedEl);
+  const flyStartX = containerRect.left + cx * scaleFactor;
+  const flyStartY = containerRect.top + cy * scaleFactor;
+  const flyCount = Math.min(20, Math.max(8, Math.ceil(amount * 3)));
+  for (let i = 0; i < flyCount; i++) {
+    const targetRect = targetBankedEl.getBoundingClientRect();
+    const targetX = targetRect.left + targetRect.width / 2;
+    const targetY = targetRect.top + targetRect.height / 2;
+    const dx = targetX - flyStartX;
+    const dy = targetY - flyStartY;
+    const midUp = Math.min(-50, dy * 0.4 - 30) + (Math.random() - 0.5) * 40;
+
+    const el = document.createElement('div');
+    el.className = 'coin hud-fly big';
+    el.textContent = '$';
+    el.style.left = (flyStartX + (Math.random() - 0.5) * 30) + 'px';
+    el.style.top = (flyStartY + (Math.random() - 0.5) * 30) + 'px';
+    el.style.color = '#ffd700';
+    el.style.fontSize = (12 + Math.random() * 6) + 'px';
+    document.body.appendChild(el);
+
+    const anim = el.animate([
+      { transform: 'translate(-50%, -50%) scale(1.2)', opacity: 1, offset: 0 },
+      { transform: `translate(calc(-50% + ${dx * 0.4 + (Math.random() - 0.5) * 50}px), calc(-50% + ${midUp}px)) scale(1)`, opacity: 1, offset: 0.4 },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.5)`, opacity: 0.9, offset: 1 },
+    ], {
+      duration: 900 + Math.random() * 400,
+      delay: 300 + i * 30,
+      easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
+      fill: 'forwards',
+    });
+    anim.onfinish = () => {
+      el.remove();
+      if (i === flyCount - 1) {
+        // Pulse banked display gold
+        targetBankedEl.style.transform = 'scale(1.5)';
+        targetBankedEl.style.color = '#fff';
+        targetBankedEl.style.textShadow = '0 0 12px #ffd700';
+        targetBankedEl.style.transition = 'all 0.15s ease-out';
+        setTimeout(() => {
+          targetBankedEl.style.transform = '';
+          targetBankedEl.style.color = '';
+          targetBankedEl.style.textShadow = '';
+          targetBankedEl.style.transition = 'all 0.4s ease-out';
+        }, 400);
+      }
+    };
+  }
+
+  // 7. Total banked text
+  setTimeout(() => {
+    const totalEl = document.createElement('div');
+    totalEl.className = 'bank-total';
+    totalEl.textContent = `Total: $${total.toFixed(2)}`;
+    totalEl.style.left = (predictedX + ROACH_WIDTH / 2) + 'px';
+    totalEl.style.top = (predictedY - 50) + 'px';
+    container.appendChild(totalEl);
+    setTimeout(() => totalEl.remove(), 2000);
+  }, 600);
+}
+
 function pulseBalance() {
   balanceEl.classList.remove('collecting');
   void balanceEl.offsetWidth;
@@ -568,7 +865,8 @@ function pulseBalance() {
 }
 
 function flyToBalance(startX, startY, text, opts = {}) {
-  const targetRect = balanceEl.getBoundingClientRect();
+  const targetBalanceEl = getVisibleStatEl(balanceEl, mobileBalanceEl);
+  const targetRect = targetBalanceEl.getBoundingClientRect();
   const targetX = targetRect.left + targetRect.width / 2 + (opts.targetJitterX || 0);
   const targetY = targetRect.top + targetRect.height / 2 + (opts.targetJitterY || 0);
   const dx = targetX - startX;
@@ -653,8 +951,8 @@ function showCoinShower(x, y, reward) {
 
   // Also collect toward the top balance counter.
   const containerRect = container.getBoundingClientRect();
-  const flyStartX = containerRect.left + x;
-  const flyStartY = containerRect.top + y;
+  const flyStartX = containerRect.left + x * scaleFactor;
+  const flyStartY = containerRect.top + y * scaleFactor;
   const collectCount = Math.min(16, Math.max(6, Math.ceil(coinCount * 0.45)));
 
   for (let i = 0; i < collectCount; i++) {
@@ -689,6 +987,7 @@ function showCoinShower(x, y, reward) {
 }
 
 function buildMinimap() {
+  // Desktop minimap
   const grid = document.getElementById('room-grid');
   grid.innerHTML = '';
   grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
@@ -701,12 +1000,31 @@ function buildMinimap() {
       grid.appendChild(cell);
     }
   }
+
+  // Mobile minimap
+  const mm = document.getElementById('mobile-minimap');
+  if (mm) {
+    mm.innerHTML = '';
+    mm.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        const cell = document.createElement('div');
+        cell.className = 'mm-cell';
+        cell.dataset.room = `${x},${y}`;
+        mm.appendChild(cell);
+      }
+    }
+  }
 }
 
 // ==================== INPUT ====================
 document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k in keys) keys[k] = true;
+  if (e.key === ' ') {
+    e.preventDefault();
+    send({ type: 'heal' });
+  }
 });
 document.addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
@@ -723,8 +1041,8 @@ container.addEventListener('mouseleave', () => {
 });
 container.addEventListener('mousemove', (e) => {
   const rect = container.getBoundingClientRect();
-  mouseX = e.clientX - rect.left;
-  mouseY = e.clientY - rect.top;
+  mouseX = (e.clientX - rect.left) / scaleFactor;
+  mouseY = (e.clientY - rect.top) / scaleFactor;
 
   const dx = mouseX - prevMouseX;
   bootTilt = Math.abs(dx) > 1 ? Math.max(-25, Math.min(25, dx * 3)) : bootTilt * 0.9;
@@ -737,8 +1055,8 @@ container.addEventListener('mousemove', (e) => {
 
 container.addEventListener('click', (e) => {
   const rect = container.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+  const x = (e.clientX - rect.left) / scaleFactor;
+  const y = (e.clientY - rect.top) / scaleFactor;
 
   // Optimistic boot animation + impact effects
   boot.classList.remove('stomping');
@@ -752,6 +1070,103 @@ container.addEventListener('click', (e) => {
 
 document.getElementById('heal-btn').addEventListener('click', () => {
   send({ type: 'heal' });
+});
+document.getElementById('mobile-heal-btn')?.addEventListener('click', () => {
+  send({ type: 'heal' });
+});
+
+// ==================== MOBILE TOUCH CONTROLS ====================
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+const joystickZone = document.getElementById('joystick-zone');
+const joystickBase = document.getElementById('joystick-base');
+const joystickKnob = document.getElementById('joystick-knob');
+const JOYSTICK_RADIUS = 50;
+let joystickTouchId = null;
+
+if (isTouchDevice) {
+  joystickZone.style.display = 'block';
+  const controlsEl = document.getElementById('controls');
+  if (controlsEl) {
+    controlsEl.innerHTML = '<b>Tap</b> to stomp | <b>Joystick</b> to move | Enter <span style="color:#f0c040">ROACH MOTEL</span> to bank!';
+  }
+}
+
+// Joystick handlers
+joystickZone.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  joystickTouchId = touch.identifier;
+  updateJoystick(touch);
+});
+joystickZone.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickTouchId) updateJoystick(touch);
+  }
+});
+joystickZone.addEventListener('touchend', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickTouchId) {
+      joystickTouchId = null;
+      joystickKnob.style.transform = 'translate(-50%, -50%)';
+      keys.w = false; keys.a = false; keys.s = false; keys.d = false;
+    }
+  }
+});
+
+function updateJoystick(touch) {
+  const rect = joystickBase.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  let dx = touch.clientX - centerX;
+  let dy = touch.clientY - centerY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > JOYSTICK_RADIUS) {
+    dx = (dx / dist) * JOYSTICK_RADIUS;
+    dy = (dy / dist) * JOYSTICK_RADIUS;
+  }
+  joystickKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  const deadzone = 15;
+  keys.a = dx < -deadzone;
+  keys.d = dx > deadzone;
+  keys.w = dy < -deadzone;
+  keys.s = dy > deadzone;
+}
+
+// Tap to stomp (game container touch)
+container.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  const rect = container.getBoundingClientRect();
+  const x = (touch.clientX - rect.left) / scaleFactor;
+  const y = (touch.clientY - rect.top) / scaleFactor;
+
+  mouseX = x;
+  mouseY = y;
+  mouseInContainer = true;
+  boot.style.left = x + 'px';
+  boot.style.top = y + 'px';
+  boot.classList.add('hovering');
+
+  boot.classList.remove('stomping');
+  void boot.offsetWidth;
+  boot.classList.add('stomping');
+  showShockwave(x, y - BOOT_HEIGHT * 0.3);
+  shakeScreen();
+  send({ type: 'stomp', x, y, seq: inputSeq });
+});
+container.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  const rect = container.getBoundingClientRect();
+  mouseX = (touch.clientX - rect.left) / scaleFactor;
+  mouseY = (touch.clientY - rect.top) / scaleFactor;
+  boot.style.left = mouseX + 'px';
+  boot.style.top = mouseY + 'px';
+});
+container.addEventListener('touchend', () => {
+  boot.classList.remove('hovering');
+  mouseInContainer = false;
 });
 
 // ==================== GAME LOOP ====================
@@ -774,6 +1189,8 @@ function gameLoop() {
       y: predictedY,
       vx: predictedVx,
       vy: predictedVy,
+      cursorX: mouseInContainer ? mouseX : -1,
+      cursorY: mouseInContainer ? mouseY : -1,
     });
     lastKeys = { ...keys };
     lastInputSend = now;

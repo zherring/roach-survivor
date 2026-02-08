@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>$ROACH Multiplayer</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -15,6 +15,7 @@
       align-items: center;
       min-height: 100vh;
       padding: 20px;
+      overflow-x: hidden;
     }
     h1 { color: #0f0; margin-bottom: 10px; }
 
@@ -25,6 +26,7 @@
     }
     #connection-status.connected { color: #0f0; }
 
+    /* ==================== DESKTOP STATS ==================== */
     #stats {
       display: flex;
       gap: 30px;
@@ -46,6 +48,7 @@
     #heal-btn:hover { background: #060; }
     #heal-btn:disabled { background: #222; border-color: #444; color: #666; cursor: not-allowed; }
 
+    /* ==================== DESKTOP MINIMAP ==================== */
     #room-grid {
       display: grid;
       gap: 5px;
@@ -66,6 +69,8 @@
       line-height: 1.2;
     }
     .room-cell.active { border-color: #0f0; color: #0f0; background: #131; }
+    .room-cell.motel { border-color: #f0c040; background: #221a00; }
+    .room-cell.active.motel { border-color: #0f0; background: #1a3a00; }
     .room-cell .wealth-bar {
       width: 100%;
       height: 3px;
@@ -82,6 +87,13 @@
       font-size: 8px;
     }
 
+    /* ==================== GAME AREA ==================== */
+    #game-wrapper {
+      position: relative;
+      width: 600px;
+      height: 400px;
+      overflow: hidden;
+    }
     #game-container {
       position: relative;
       width: 600px;
@@ -90,9 +102,198 @@
       border: 2px solid #333;
       cursor: none;
       overflow: hidden;
+      transform: scale(var(--game-scale, 1));
+      transform-origin: top left;
+      touch-action: none;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
-    /* Roach sprites */
+    /* ==================== MOBILE HUD (hidden on desktop) ==================== */
+    #mobile-hud { display: none; }
+    #mobile-heal-bar { display: none; }
+    #mobile-minimap { display: none; }
+    #mobile-motel-info { display: none; }
+
+    /* ==================== MOBILE LAYOUT ==================== */
+    @media (max-width: 640px) {
+      body {
+        padding: 0;
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+        justify-content: flex-start;
+      }
+
+      /* Hide desktop-only elements */
+      h1 { display: none; }
+      #player-count { display: none; }
+      #controls { display: none; }
+      #log { display: none; }
+      #stats { display: none; }
+      #room-grid { display: none; }
+      #connection-status {
+        position: fixed;
+        top: 2px;
+        right: 6px;
+        z-index: 3000;
+        font-size: 9px;
+        margin: 0;
+      }
+
+      /* Game fills width, aspect ratio preserved */
+      #game-wrapper {
+        width: 100vw;
+        /* height computed by JS */
+      }
+      #game-container {
+        border: none;
+        border-bottom: 1px solid #333;
+      }
+
+      /* Mobile HUD — compact stat bar ABOVE game */
+      #mobile-hud {
+        display: flex;
+        width: 100%;
+        padding: 6px 12px;
+        background: #0a0a0a;
+        border-bottom: 1px solid #222;
+        justify-content: space-around;
+        align-items: center;
+        flex-shrink: 0;
+      }
+      .hud-group {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 0;
+      }
+      .hud-label {
+        color: #555;
+        font-size: 7px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        line-height: 1;
+      }
+      .hud-value {
+        color: #ff0;
+        font-weight: bold;
+        font-size: 14px;
+        line-height: 1.2;
+      }
+      .hud-value.banked { color: #f0c040; }
+      .hud-value.hp { color: #0f0; }
+      .hud-value.kills { color: #f66; }
+
+      /* Mobile heal bar — directly under game area */
+      #mobile-heal-bar {
+        display: block;
+        width: 100%;
+        padding: 4px 8px;
+        background: #0a0a0a;
+        flex-shrink: 0;
+      }
+      #mobile-heal-btn {
+        display: block;
+        width: 100%;
+        background: #040;
+        border: 1px solid #0a0;
+        color: #0f0;
+        font-family: monospace;
+        font-size: 14px;
+        font-weight: bold;
+        padding: 12px;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      #mobile-heal-btn:disabled {
+        background: #1a1a1a;
+        border-color: #333;
+        color: #444;
+      }
+
+      /* Mobile minimap — inline below heal bar */
+      #mobile-minimap {
+        display: grid;
+        width: 100%;
+        padding: 6px 12px;
+        background: #0a0a0a;
+        gap: 2px;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .mm-cell {
+        width: 100%;
+        aspect-ratio: 1.4;
+        background: #1a1a1a;
+        border: 1px solid #333;
+      }
+      .mm-cell.active {
+        border-color: #0f0;
+        background: #0a2a0a;
+        box-shadow: 0 0 4px #0f0;
+      }
+      .mm-cell.motel {
+        background: #2a2200;
+        border-color: #f0c040;
+        box-shadow: 0 0 3px rgba(240, 192, 64, 0.5);
+      }
+      .mm-cell.active.motel {
+        background: #1a3a00;
+        border-color: #0f0;
+        box-shadow: 0 0 4px #0f0, inset 0 0 4px rgba(240, 192, 64, 0.4);
+      }
+
+      /* Mobile motel info — compact countdown below minimap */
+      #mobile-motel-info {
+        display: flex;
+        width: 100%;
+        padding: 4px 12px;
+        background: #0a0a0a;
+        border-top: 1px solid #1a1a1a;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-family: monospace;
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+      #mm-motel-icon {
+        color: #f0c040;
+        font-weight: bold;
+        font-size: 10px;
+      }
+      #mm-motel-countdown {
+        color: #0f0;
+        font-weight: bold;
+        font-size: 14px;
+      }
+      #mm-motel-room {
+        color: #ff0;
+        font-size: 11px;
+      }
+      #mobile-motel-info.inactive #mm-motel-icon { color: #555; }
+      #mobile-motel-info.inactive #mm-motel-countdown { color: #555; }
+      #mobile-motel-info.inactive #mm-motel-room { color: #444; }
+      #mm-motel-room.here {
+        color: #0f0;
+        animation: blink 0.5s infinite;
+      }
+
+      /* Also hide desktop motel timer on mobile */
+      #motel-timer { display: none; }
+
+      /* Joystick: slightly bigger touch target on mobile */
+      #joystick-zone {
+        bottom: 12px;
+        left: 12px;
+        width: 110px;
+        height: 110px;
+      }
+    }
+
+    /* ==================== ROACH SPRITES ==================== */
     .roach {
       position: absolute;
       width: 35px;
@@ -184,7 +385,7 @@
       filter: drop-shadow(0 1px 0 #800000);
     }
 
-    /* Boot cursor */
+    /* ==================== BOOT CURSOR ==================== */
     .boot {
       position: absolute;
       width: 100px;
@@ -214,7 +415,14 @@
       100% { opacity: 0.6; transform: translateX(-50%) translateY(-80%) scale(1); }
     }
 
-    /* House bot */
+    /* Other players' boot cursors */
+    .boot.other-boot {
+      opacity: 0.3;
+      filter: brightness(1) sepia(1) hue-rotate(180deg) saturate(2);
+      transition: none;
+    }
+
+    /* ==================== HOUSE BOT ==================== */
     .house-bot {
       position: absolute;
       width: 80px;
@@ -242,21 +450,21 @@
       100% { transform: translateY(0) scale(1); }
     }
 
-    /* Screen shake on nearby stomps */
+    /* ==================== SCREEN SHAKE ==================== */
     #game-container.shake {
       animation: screen-shake 0.3s ease-out;
     }
     @keyframes screen-shake {
-      0% { transform: translate(0, 0); }
-      15% { transform: translate(-4px, 3px); }
-      30% { transform: translate(5px, -2px); }
-      45% { transform: translate(-3px, 4px); }
-      60% { transform: translate(3px, -1px); }
-      75% { transform: translate(-1px, 2px); }
-      100% { transform: translate(0, 0); }
+      0%  { transform: scale(var(--game-scale, 1)) translate(0, 0); }
+      15% { transform: scale(var(--game-scale, 1)) translate(-4px, 3px); }
+      30% { transform: scale(var(--game-scale, 1)) translate(5px, -2px); }
+      45% { transform: scale(var(--game-scale, 1)) translate(-3px, 4px); }
+      60% { transform: scale(var(--game-scale, 1)) translate(3px, -1px); }
+      75% { transform: scale(var(--game-scale, 1)) translate(-1px, 2px); }
+      100%{ transform: scale(var(--game-scale, 1)) translate(0, 0); }
     }
 
-    /* Shockwave ring — AoE indicator */
+    /* ==================== VFX ==================== */
     .shockwave {
       position: absolute;
       width: 120px;
@@ -273,7 +481,6 @@
       100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; border-width: 1px; }
     }
 
-    /* Splat effect — bigger, nastier */
     .splat {
       position: absolute;
       width: 50px;
@@ -294,7 +501,6 @@
       100% { transform: scale(1) rotate(35deg); opacity: 0; }
     }
 
-    /* Coin shower particles */
     .coin {
       position: absolute;
       font-family: monospace;
@@ -330,7 +536,7 @@
       100% { transform: scale(1); color: #ff0; }
     }
 
-    /* Roach Motel */
+    /* ==================== MOTEL ==================== */
     .roach-motel {
       position: absolute;
       width: 240px;
@@ -346,7 +552,6 @@
     }
     .roach-motel.hidden { display: none !important; }
 
-    /* Saving overlay */
     .roach.saving::before {
       content: '';
       position: absolute;
@@ -360,6 +565,22 @@
       50% { background: rgba(0, 255, 100, 0.5); }
     }
 
+    .heal-burst {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 255, 100, 0.7), rgba(0, 255, 100, 0) 70%);
+      pointer-events: none;
+      z-index: 90;
+      animation: heal-burst-anim 0.6s ease-out forwards;
+    }
+    @keyframes heal-burst-anim {
+      0% { transform: scale(0.3); opacity: 1; }
+      40% { transform: scale(1.8); opacity: 0.8; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+
     .save-countdown {
       position: absolute;
       font-family: monospace;
@@ -371,7 +592,80 @@
       z-index: 500;
     }
 
-    /* Motel timer */
+    /* ==================== BANK CELEBRATION VFX ==================== */
+    .bank-flash {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: radial-gradient(circle, rgba(255, 215, 0, 0.4), rgba(255, 165, 0, 0.1) 60%, transparent 80%);
+      pointer-events: none;
+      z-index: 400;
+      animation: bank-flash-anim 0.8s ease-out forwards;
+    }
+    @keyframes bank-flash-anim {
+      0% { opacity: 0; }
+      15% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    .bank-banner {
+      position: absolute;
+      font-family: monospace;
+      font-size: 28px;
+      font-weight: bold;
+      color: #ffd700;
+      text-shadow: 0 0 20px #ffa500, 0 0 40px #ff8c00, 2px 2px 0 #000, -1px -1px 0 #000;
+      pointer-events: none;
+      z-index: 600;
+      text-align: center;
+      transform: translateX(-50%);
+      animation: bank-banner-rise 2s ease-out forwards;
+      white-space: nowrap;
+    }
+    @keyframes bank-banner-rise {
+      0% { transform: translateX(-50%) translateY(0) scale(0.5); opacity: 0; }
+      10% { transform: translateX(-50%) translateY(0) scale(1.3); opacity: 1; }
+      25% { transform: translateX(-50%) translateY(-10px) scale(1); opacity: 1; }
+      70% { opacity: 1; }
+      100% { transform: translateX(-50%) translateY(-80px) scale(0.8); opacity: 0; }
+    }
+
+    .bank-ring {
+      position: absolute;
+      width: 180px;
+      height: 180px;
+      border: 4px solid rgba(255, 215, 0, 0.8);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 95;
+      animation: bank-ring-expand 0.7s ease-out forwards;
+    }
+    @keyframes bank-ring-expand {
+      0% { transform: translate(-50%, -50%) scale(0.1); opacity: 1; border-width: 6px; }
+      40% { opacity: 0.8; border-width: 3px; }
+      100% { transform: translate(-50%, -50%) scale(2); opacity: 0; border-width: 1px; }
+    }
+
+    .bank-total {
+      position: absolute;
+      font-family: monospace;
+      font-size: 16px;
+      font-weight: bold;
+      color: #f0c040;
+      text-shadow: 0 0 8px #f0c040, 1px 1px 0 #000;
+      pointer-events: none;
+      z-index: 600;
+      text-align: center;
+      transform: translateX(-50%);
+      animation: bank-total-anim 2s ease-out forwards;
+    }
+    @keyframes bank-total-anim {
+      0% { transform: translateX(-50%) translateY(0) scale(0.8); opacity: 0; }
+      15% { transform: translateX(-50%) translateY(0) scale(1.1); opacity: 1; }
+      30% { transform: translateX(-50%) translateY(-5px) scale(1); opacity: 1; }
+      70% { opacity: 1; }
+      100% { transform: translateX(-50%) translateY(-60px) scale(0.7); opacity: 0; }
+    }
+
     #motel-timer {
       position: absolute;
       top: 5px;
@@ -435,6 +729,37 @@
       font-size: 12px;
       margin-bottom: 5px;
     }
+
+    /* ==================== VIRTUAL JOYSTICK ==================== */
+    #joystick-zone {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      width: 120px;
+      height: 120px;
+      z-index: 2000;
+      touch-action: none;
+    }
+    #joystick-base {
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.08);
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      border-radius: 50%;
+      position: relative;
+    }
+    #joystick-knob {
+      width: 44px;
+      height: 44px;
+      background: rgba(0, 255, 0, 0.4);
+      border: 2px solid rgba(0, 255, 0, 0.7);
+      border-radius: 50%;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
   </style>
 </head>
 <body>
@@ -453,11 +778,52 @@
 
   <div id="room-grid"></div>
 
-  <div id="game-container">
-    <div id="boot" class="boot"></div>
-    <div id="roach-motel" class="roach-motel hidden"></div>
-    <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
-    <div id="player-arrow" class="player-arrow"></div>
+  <!-- Mobile HUD — stats above game (shown on mobile only via CSS) -->
+  <div id="mobile-hud">
+    <div class="hud-group">
+      <span class="hud-label">$ROACH</span>
+      <span class="hud-value" id="m-balance">0.00</span>
+    </div>
+    <div class="hud-group">
+      <span class="hud-label">Banked</span>
+      <span class="hud-value banked" id="m-banked">0.00</span>
+    </div>
+    <div class="hud-group">
+      <span class="hud-label">HP</span>
+      <span class="hud-value hp" id="m-hp">2/2</span>
+    </div>
+    <div class="hud-group">
+      <span class="hud-label">Kills</span>
+      <span class="hud-value kills" id="m-kills">0</span>
+    </div>
+  </div>
+
+  <div id="game-wrapper">
+    <div id="game-container">
+      <div id="boot" class="boot"></div>
+      <div id="roach-motel" class="roach-motel hidden"></div>
+      <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
+      <div id="player-arrow" class="player-arrow"></div>
+    </div>
+  </div>
+
+  <!-- Mobile heal bar — directly under game (shown on mobile only via CSS) -->
+  <div id="mobile-heal-bar">
+    <button id="mobile-heal-btn">HEAL $1</button>
+  </div>
+
+  <!-- Mobile minimap — below heal bar (shown on mobile only via CSS) -->
+  <div id="mobile-minimap"></div>
+  <div id="mobile-motel-info">
+    <span id="mm-motel-icon">MOTEL</span>
+    <span id="mm-motel-countdown">--</span>
+    <span id="mm-motel-room"></span>
+  </div>
+
+  <div id="joystick-zone">
+    <div id="joystick-base">
+      <div id="joystick-knob"></div>
+    </div>
   </div>
 
   <div id="controls">
