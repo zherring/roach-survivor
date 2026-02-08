@@ -19,6 +19,7 @@ export class Roach {
     this.isDead = false;
     this.name = name;
     this.lastInputSeq = 0;
+    this.healCount = 0;
     // Pending client state (position + velocity reported by client)
     this.pendingPos = null; // { x, y, vx, vy }
   }
@@ -35,11 +36,19 @@ export class Roach {
 
     const p = this.pendingPos;
     this.pendingPos = null;
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.vx) || !Number.isFinite(p.vy)) {
+      return;
+    }
+    if (!Number.isFinite(this.x) || !Number.isFinite(this.y) || !Number.isFinite(this.vx) || !Number.isFinite(this.vy)) {
+      this.respawn();
+      this.vx = 0;
+      this.vy = 0;
+    }
 
     // Anti-cheat: clamp velocity to max allowed speed (with small tolerance)
     const maxSpeed = this.getSpeed() * 1.5; // tolerance for drunk steering spikes
     const mag = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-    if (mag > maxSpeed) {
+    if (Number.isFinite(mag) && mag > maxSpeed && mag > 0) {
       p.vx = (p.vx / mag) * maxSpeed;
       p.vy = (p.vy / mag) * maxSpeed;
     }
@@ -51,7 +60,7 @@ export class Roach {
     const dy = clampedY - this.y;
     const posDist = Math.sqrt(dx * dx + dy * dy);
     const maxDist = maxSpeed * 10; // generous tolerance — client runs at 60fps, scatter/flee can spike
-    if (posDist > maxDist) {
+    if (Number.isFinite(posDist) && posDist > maxDist && posDist > 0) {
       // Clamp to max allowed distance in the reported direction
       this.x += (dx / posDist) * maxDist;
       this.y += (dy / posDist) * maxDist;
@@ -59,11 +68,18 @@ export class Roach {
       this.x = clampedX;
       this.y = clampedY;
     }
-    this.vx = p.vx;
-    this.vy = p.vy;
+    this.vx = Number.isFinite(p.vx) ? p.vx : 0;
+    this.vy = Number.isFinite(p.vy) ? p.vy : 0;
+
+    this.x = Math.max(-15, Math.min(CONTAINER_WIDTH + 15, this.x));
+    this.y = Math.max(-15, Math.min(CONTAINER_HEIGHT + 15, this.y));
+
+    if (!Number.isFinite(this.x) || !Number.isFinite(this.y)) {
+      this.respawn();
+    }
   }
 
-  update(dt, bots) {
+  update(dt, bots, cursors = []) {
     if (this.isDead) return;
 
     // Players are driven by client state, skip server-side physics for them
@@ -72,6 +88,18 @@ export class Roach {
     // NPC drunk steering
     this.vx += (Math.random() - 0.5) * 0.3;
     this.vy += (Math.random() - 0.5) * 0.3;
+
+    // NPC flee from player cursors (boot)
+    for (const cursor of cursors) {
+      const dx = this.x - cursor.x;
+      const dy = this.y - cursor.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 50 && dist > 0) {
+        const fleeForce = (50 - dist) / 50 * 0.3;
+        this.vx += (dx / dist) * fleeForce;
+        this.vy += (dy / dist) * fleeForce;
+      }
+    }
 
     // NPC flee from bots
     if (bots) {

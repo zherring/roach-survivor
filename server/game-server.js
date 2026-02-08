@@ -8,6 +8,64 @@ import { Motel } from './motel.js';
 
 const ADJECTIVES = ['Speedy', 'Sneaky', 'Giant', 'Tiny', 'Stinky', 'Slimy', 'Crunchy', 'Greasy', 'Fuzzy', 'Crusty'];
 const NOUNS = ['Roach', 'Bug', 'Crawler', 'Scuttler', 'Skitter', 'Creeper', 'Muncher', 'Nibbler', 'Dasher', 'Lurker'];
+const INVALID_CURSOR = -1;
+const MAX_INPUT_OVERSHOOT = 200;
+const MAX_ABS_INPUT_VELOCITY = 50;
+const MAX_INPUT_SEQUENCE = 2_147_483_647;
+
+function toFiniteNumber(value) {
+  const num = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function toFiniteInteger(value) {
+  const num = toFiniteNumber(value);
+  if (num === null || !Number.isInteger(num)) return null;
+  return num;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function sanitizeInputMessage(msg) {
+  if (!msg || typeof msg !== 'object') return null;
+
+  const x = toFiniteNumber(msg.x);
+  const y = toFiniteNumber(msg.y);
+  const vx = toFiniteNumber(msg.vx);
+  const vy = toFiniteNumber(msg.vy);
+  if (x === null || y === null || vx === null || vy === null) return null;
+
+  const seq = toFiniteInteger(msg.seq);
+  const cursorX = toFiniteNumber(msg.cursorX);
+  const cursorY = toFiniteNumber(msg.cursorY);
+  const hasCursor = cursorX !== null && cursorY !== null;
+
+  return {
+    x: clamp(x, -MAX_INPUT_OVERSHOOT, CONTAINER_WIDTH + MAX_INPUT_OVERSHOOT),
+    y: clamp(y, -MAX_INPUT_OVERSHOOT, CONTAINER_HEIGHT + MAX_INPUT_OVERSHOOT),
+    vx: clamp(vx, -MAX_ABS_INPUT_VELOCITY, MAX_ABS_INPUT_VELOCITY),
+    vy: clamp(vy, -MAX_ABS_INPUT_VELOCITY, MAX_ABS_INPUT_VELOCITY),
+    seq: seq === null ? null : clamp(seq, 0, MAX_INPUT_SEQUENCE),
+    cursorX: hasCursor ? clamp(cursorX, 0, CONTAINER_WIDTH) : INVALID_CURSOR,
+    cursorY: hasCursor ? clamp(cursorY, 0, CONTAINER_HEIGHT) : INVALID_CURSOR,
+  };
+}
+
+function sanitizeStompMessage(msg) {
+  if (!msg || typeof msg !== 'object') return null;
+  const x = toFiniteNumber(msg.x);
+  const y = toFiniteNumber(msg.y);
+  if (x === null || y === null) return null;
+  const seq = toFiniteInteger(msg.seq);
+
+  return {
+    x: clamp(x, 0, CONTAINER_WIDTH),
+    y: clamp(y, 0, CONTAINER_HEIGHT),
+    seq: seq === null ? 0 : clamp(seq, 0, MAX_INPUT_SEQUENCE),
+  };
+}
 
 export class GameServer {
   constructor() {
@@ -47,6 +105,8 @@ export class GameServer {
       room: roomKey,
       bankedBalance: 0,
       lastStomp: 0,
+      cursorX: INVALID_CURSOR,
+      cursorY: INVALID_CURSOR,
     };
     this.players.set(roach.id, player);
 
@@ -82,15 +142,26 @@ export class GameServer {
   handleMessage(playerId, msg) {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
 
     switch (msg.type) {
       case 'input': {
-        // Client sends its own position + velocity; server validates and accepts
-        player.roach.pendingPos = { x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy };
-        player.roach.lastInputSeq = msg.seq;
+        const input = sanitizeInputMessage(msg);
+        if (!input) break;
+
+        player.roach.pendingPos = { x: input.x, y: input.y, vx: input.vx, vy: input.vy };
+        if (input.seq !== null && input.seq >= player.roach.lastInputSeq) {
+          player.roach.lastInputSeq = input.seq;
+        }
+
+        player.cursorX = input.cursorX;
+        player.cursorY = input.cursorY;
         break;
       }
       case 'stomp': {
+        const stomp = sanitizeStompMessage(msg);
+        if (!stomp) break;
+
         const now = Date.now();
         if (now - player.lastStomp < STOMP_COOLDOWN) break;
         player.lastStomp = now;
@@ -98,9 +169,9 @@ export class GameServer {
         if (room) {
           room.pendingStomps.push({
             playerId,
-            x: msg.x,
-            y: msg.y,
-            seq: msg.seq,
+            x: stomp.x,
+            y: stomp.y,
+            seq: stomp.seq,
           });
         }
         break;
@@ -110,6 +181,7 @@ export class GameServer {
         if (roach.hp >= MAX_HP || roach.balance < HEAL_COST) break;
         roach.balance -= HEAL_COST;
         roach.hp = Math.min(roach.hp + 1, MAX_HP);
+        roach.healCount++;
         break;
       }
     }
@@ -122,7 +194,16 @@ export class GameServer {
 
     // Simulate each room
     for (const [key, room] of this.rooms) {
-      const events = room.simulate(now);
+      // Collect player cursors in this room for NPC flee
+      const cursors = [];
+      for (const [id, p] of this.players) {
+        if (p.room === key
+            && Number.isFinite(p.cursorX) && Number.isFinite(p.cursorY)
+            && p.cursorX >= 0 && p.cursorY >= 0) {
+          cursors.push({ x: p.cursorX, y: p.cursorY });
+        }
+      }
+      const events = room.simulate(now, cursors);
       for (const evt of events) {
         evt.room = key;
         allEvents.push(evt);
@@ -170,6 +251,16 @@ export class GameServer {
         e.room === player.room || e.playerId === id || e.victimId === id || e.stomperId === id
       );
 
+      // Collect other players' cursor positions in same room
+      const cursors = [];
+      for (const [otherId, other] of this.players) {
+        if (other.room === player.room && otherId !== id
+            && Number.isFinite(other.cursorX) && Number.isFinite(other.cursorY)
+            && other.cursorX >= 0 && other.cursorY >= 0) {
+          cursors.push({ id: otherId, x: other.cursorX, y: other.cursorY });
+        }
+      }
+
       this.send(player.ws, {
         type: 'tick',
         tick: this.tickCount,
@@ -177,12 +268,14 @@ export class GameServer {
         motel: this.motel.serialize(),
         motelProgress: this.motel.getSavingProgress(id),
         events: roomEvents,
+        cursors,
         you: {
           id,
           balance: player.roach.balance,
           banked: player.bankedBalance,
           hp: player.roach.hp,
           lastInputSeq: player.roach.lastInputSeq,
+          healCount: player.roach.healCount,
         },
       });
     }
