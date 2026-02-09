@@ -147,9 +147,9 @@ export class Room {
             x, y,
           });
 
-          roach.die();
-          // Schedule NPC removal and respawn
           if (!roach.isPlayer) {
+            roach.die();
+            // Schedule NPC removal and respawn
             setTimeout(() => {
               const idx = this.roaches.indexOf(roach);
               if (idx > -1) this.roaches.splice(idx, 1);
@@ -160,9 +160,10 @@ export class Room {
               }, 5000 + Math.random() * 5000);
             }, 500);
           } else {
-            // Player killed another player!
-            const lost = roach.balance;
+            // Player killed another player — apply death penalty before die()
+            const lost = roach.balance * DEATH_PENALTY;
             roach.balance *= (1 - DEATH_PENALTY);
+            roach.die();
             setTimeout(() => roach.respawn(), 500);
             events.push({
               type: 'player_death',
@@ -203,10 +204,10 @@ export class Room {
           if (killed) {
             const reward = roach.balance * KILL_REWARD;
             if (stomper) stomper.balance += reward;
-            roach.die();
             events.push({ type: 'stomp_kill', stomperId: playerId, victimId: roach.id, reward, x: roach.x, y: roach.y });
 
             if (!roach.isPlayer) {
+              roach.die();
               setTimeout(() => {
                 const idx = this.roaches.indexOf(roach);
                 if (idx > -1) this.roaches.splice(idx, 1);
@@ -217,9 +218,11 @@ export class Room {
                 }, 5000 + Math.random() * 5000);
               }, 500);
             } else {
+              const lost = roach.balance * DEATH_PENALTY;
               roach.balance *= (1 - DEATH_PENALTY);
+              roach.die();
               setTimeout(() => roach.respawn(), 500);
-              events.push({ type: 'player_death', victimId: roach.id, killerId: playerId, lost: reward });
+              events.push({ type: 'player_death', victimId: roach.id, killerId: playerId, lost });
             }
           }
         }

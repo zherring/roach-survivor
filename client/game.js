@@ -223,7 +223,7 @@ function handleMessage(msg) {
       buildMinimap();
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
-      log(`<span style="color:#0ff">You are ${myName}!</span>`);
+      log(`<span style="color:#0ff">You are ${escapeHtml(myName)}!</span>`);
       log('Your roach is <span style="color:#0ff">CYAN</span>. <span style="color:#a00">RED BOOTS</span> hunt wealthy roaches.');
       break;
 
@@ -356,7 +356,7 @@ function handleEvent(evt) {
     case 'stomp_hit':
       AudioManager.play('stomp_hit', 0.5);
       if (evt.victimId === myId) {
-        log(`<span class="death">You got stomped! (${evt.hp}/2 HP)</span>`);
+        log(`<span class="death">You got stomped! (${evt.hp}/${MAX_HP} HP)</span>`);
       }
       break;
     case 'stomp_miss':
@@ -425,7 +425,7 @@ function updateRoachEl(data) {
     if (data.isPlayer && data.name) {
       const nameEl = document.createElement('div');
       nameEl.className = 'roach-name';
-      nameEl.textContent = data.id === myId ? `(you) ${data.name}` : data.name;
+      nameEl.textContent = data.id === myId ? `(you) ${data.name || ''}` : (data.name || '');
       container.appendChild(nameEl);
       nameEls.set(data.id, nameEl);
     }
@@ -753,6 +753,10 @@ function updateUI() {
     if (entry.data.isPlayer) playerCount++;
   }
   document.getElementById('player-count').textContent = `Players in room: ${playerCount}`;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function log(msg) {
@@ -1487,7 +1491,6 @@ function gameLoop() {
     send({
       type: 'input',
       seq: inputSeq,
-      keys: { ...keys },
       x: predictedX,
       y: predictedY,
       vx: predictedVx,

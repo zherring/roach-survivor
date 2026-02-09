@@ -10,6 +10,8 @@ const ADJECTIVES = ['Speedy', 'Sneaky', 'Giant', 'Tiny', 'Stinky', 'Slimy', 'Cru
 const NOUNS = ['Roach', 'Bug', 'Crawler', 'Scuttler', 'Skitter', 'Creeper', 'Muncher', 'Nibbler', 'Dasher', 'Lurker'];
 const INVALID_CURSOR = -1;
 const MAX_INPUT_OVERSHOOT = 200;
+const MAX_MESSAGES_PER_SECOND = 60;
+const HEAL_COOLDOWN = 200; // ms between heal attempts
 const MAX_ABS_INPUT_VELOCITY = 50;
 const MAX_INPUT_SEQUENCE = 2_147_483_647;
 
@@ -105,8 +107,11 @@ export class GameServer {
       room: roomKey,
       bankedBalance: 0,
       lastStomp: 0,
+      lastHeal: 0,
       cursorX: INVALID_CURSOR,
       cursorY: INVALID_CURSOR,
+      msgCount: 0,
+      msgWindowStart: Date.now(),
     };
     this.players.set(roach.id, player);
 
@@ -144,6 +149,15 @@ export class GameServer {
     if (!player) return;
     if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
 
+    // Rate limit: drop messages if exceeding budget
+    const now = Date.now();
+    if (now - player.msgWindowStart > 1000) {
+      player.msgCount = 0;
+      player.msgWindowStart = now;
+    }
+    player.msgCount++;
+    if (player.msgCount > MAX_MESSAGES_PER_SECOND) return;
+
     switch (msg.type) {
       case 'input': {
         const input = sanitizeInputMessage(msg);
@@ -177,8 +191,11 @@ export class GameServer {
         break;
       }
       case 'heal': {
+        const healNow = Date.now();
+        if (healNow - player.lastHeal < HEAL_COOLDOWN) break;
         const roach = player.roach;
         if (roach.hp >= MAX_HP || roach.balance < HEAL_COST) break;
+        player.lastHeal = healNow;
         roach.balance -= HEAL_COST;
         roach.hp = Math.min(roach.hp + 1, MAX_HP);
         roach.healCount++;
