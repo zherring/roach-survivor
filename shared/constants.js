@@ -5,12 +5,12 @@ export const TICKS_PER_SEC = 1000 / TICK_RATE;
 export const CONTAINER_WIDTH = 600;
 export const CONTAINER_HEIGHT = 400;
 
-export const ROACH_WIDTH = 35;
-export const ROACH_HEIGHT = 35;
-export const BOOT_WIDTH = 100;
-export const BOOT_HEIGHT = 110;
-export const BOT_WIDTH = 80;
-export const BOT_HEIGHT = 88;
+export const ROACH_WIDTH = 47;
+export const ROACH_HEIGHT = 47;
+export const BOOT_WIDTH = 135;
+export const BOOT_HEIGHT = 149;
+export const BOT_WIDTH = 108;
+export const BOT_HEIGHT = 119;
 
 export const GRID_SIZE = 3; // 3x3 room grid
 
@@ -37,5 +37,5 @@ export const BOT_STOMP_COOLDOWN_MIN = 600;
 export const BOT_STOMP_COOLDOWN_RANGE = 300;
 export const BOTS_PER_WEALTH = 5; // 1 bot per $5 — more bots faster
 export const MAX_BOTS_PER_ROOM = 8;
-export const STOMP_AOE_RADIUS = 60; // AoE splash damage radius
+export const STOMP_AOE_RADIUS = 81; // AoE splash damage radius
 export const STOMP_AOE_DAMAGE = 1; // 1 HP splash to nearby roaches

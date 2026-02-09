@@ -15,6 +15,7 @@
       align-items: center;
       min-height: 100vh;
       padding: 20px;
+      overflow-x: hidden;
     }
     h1 { color: #0f0; margin-bottom: 10px; }
 
@@ -426,6 +427,88 @@
     #log .kill { color: #0f0; }
     #log .death { color: #f00; }
     #log .money { color: #ff0; }
+
+    /* ==================== PROSPECTOR NPC ==================== */
+    #prospector {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: flex-end;
+      pointer-events: none;
+      transition: bottom 0.4s ease-out;
+      bottom: -140px;
+    }
+    #prospector.visible {
+      bottom: 0;
+    }
+    #prospector-face {
+      width: 120px;
+      height: 120px;
+      image-rendering: pixelated;
+      pointer-events: none;
+      flex-shrink: 0;
+      background: #000;
+    }
+    #prospector-balloon {
+      position: relative;
+      background: #f5f0d0;
+      border: 3px solid #333;
+      padding: 10px 28px 10px 12px;
+      margin-left: -10px;
+      margin-bottom: 30px;
+      max-width: 300px;
+      min-width: 180px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #222;
+      line-height: 1.4;
+      pointer-events: auto;
+    }
+    /* Speech balloon tail pointing left */
+    #prospector-balloon::before {
+      content: '';
+      position: absolute;
+      left: -12px;
+      bottom: 8px;
+      width: 0;
+      height: 0;
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      border-right: 12px solid #333;
+    }
+    #prospector-balloon::after {
+      content: '';
+      position: absolute;
+      left: -8px;
+      bottom: 10px;
+      width: 0;
+      height: 0;
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      border-right: 10px solid #f5f0d0;
+    }
+    #prospector-close {
+      position: absolute;
+      top: 2px;
+      right: 4px;
+      background: none;
+      border: none;
+      color: #888;
+      font-family: monospace;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 4px;
+    }
+    #prospector-close:hover {
+      color: #f00;
+    }
+    #prospector-text {
+      min-height: 1.4em;
+    }
   </style>
 </head>
 <body>
@@ -499,6 +582,15 @@
   </div>
 
   <div id="log"></div>
+
+  <!-- Prospector NPC -->
+  <div id="prospector">
+    <img id="prospector-face" src="prospector-closed.png" alt="Prospector">
+    <div id="prospector-balloon">
+      <button id="prospector-close" onclick="prospector.dismiss()">&times;</button>
+      <div id="prospector-text"></div>
+    </div>
+  </div>
 
   <script>
     // Game state
@@ -791,6 +883,15 @@
       }
 
       log(`<span style="color:#f0c040">ROACH MOTEL appeared in room ${randomRoom}!</span>`);
+
+      // Prospector motel commentary
+      if (typeof prospector !== 'undefined' && prospector.onboardingDone) {
+        if (randomRoom === state.currentRoom) {
+          prospector.comment('motelHere', "HOT DIGGITY! The Roach Motel just showed up RIGHT HERE! Git in there and bank them bucks!", 10000);
+        } else {
+          prospector.comment('motelElsewhere', `The Roach Motel popped up in room ${randomRoom}! Better scurry on over if yer carryin' any gold!`, 10000);
+        }
+      }
     }
 
     function despawnMotel() {
@@ -1373,6 +1474,16 @@
 
       log(`<span class="death">YOUR ROACH DIED!</span> <span class="money">Lost $${lost.toFixed(2)}</span>`);
       updateUI();
+
+      // Prospector death commentary
+      const deathLines = [
+        "Well shoot! Yer roach got flattened! Don't worry, we got more where that came from!",
+        "Deader than a doornail! But a true roach always comes back!",
+        "That boot made a pancake outta ya! Shake it off and get back in there!",
+      ];
+      if (typeof prospector !== 'undefined' && prospector.onboardingDone) {
+        prospector.comment('death', deathLines[Math.floor(Math.random() * deathLines.length)], 10000);
+      }
     }
 
     // Initialize house bots for a room (now uses dynamic wealth-based system)
@@ -1770,6 +1881,196 @@
       btn.disabled = !canHeal;
     }
 
+    // ==================== PROSPECTOR NPC SYSTEM ====================
+    const prospector = {
+      el: document.getElementById('prospector'),
+      face: document.getElementById('prospector-face'),
+      textEl: document.getElementById('prospector-text'),
+      queue: [],           // Messages waiting to be shown
+      typing: false,       // Currently typing out a message
+      visible: false,
+      talkTimer: null,     // Mouth animation interval
+      hideTimer: null,     // Auto-hide after message
+      charIndex: 0,
+      currentText: '',
+      onboardingDone: false,
+      // Track events so we don't repeat commentary too often
+      lastCommentary: {},
+
+      show(text) {
+        // Clear any pending hide
+        if (this.hideTimer) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+
+        this.currentText = text;
+        this.charIndex = 0;
+        this.textEl.textContent = '';
+        this.visible = true;
+        this.el.classList.add('visible');
+        this.startTalking();
+
+        // Type out the text character by character
+        this.typing = true;
+        this._typeNext();
+      },
+
+      _typeNext() {
+        if (this.charIndex < this.currentText.length) {
+          this.charIndex++;
+          this.textEl.textContent = this.currentText.slice(0, this.charIndex);
+          setTimeout(() => this._typeNext(), 30 + Math.random() * 20);
+        } else {
+          // Done typing
+          this.typing = false;
+          this.stopTalking();
+          // Auto-dismiss after a delay based on text length
+          const readTime = Math.max(3000, this.currentText.length * 60);
+          this.hideTimer = setTimeout(() => this._nextOrHide(), readTime);
+        }
+      },
+
+      startTalking() {
+        this.face.src = 'prospector-speaking.png';
+        if (this.talkTimer) clearInterval(this.talkTimer);
+        // Alternate mouth open/closed while typing
+        let mouthOpen = true;
+        this.talkTimer = setInterval(() => {
+          mouthOpen = !mouthOpen;
+          this.face.src = mouthOpen ? 'prospector-speaking.png' : 'prospector-closed.png';
+        }, 120);
+      },
+
+      stopTalking() {
+        if (this.talkTimer) { clearInterval(this.talkTimer); this.talkTimer = null; }
+        this.face.src = 'prospector-closed.png';
+      },
+
+      hide() {
+        this.visible = false;
+        this.el.classList.remove('visible');
+        this.stopTalking();
+        this.typing = false;
+        if (this.hideTimer) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+      },
+
+      dismiss() {
+        // Player clicked X - skip current message and move to next or hide
+        this.typing = false;
+        if (this.hideTimer) { clearTimeout(this.hideTimer); this.hideTimer = null; }
+        this._nextOrHide();
+      },
+
+      _nextOrHide() {
+        if (this.queue.length > 0) {
+          const next = this.queue.shift();
+          this.show(next);
+        } else {
+          this.hide();
+          this.onboardingDone = true;
+        }
+      },
+
+      say(text) {
+        if (this.visible && (this.typing || this.hideTimer)) {
+          // Already showing something, queue it
+          this.queue.push(text);
+        } else {
+          this.show(text);
+        }
+      },
+
+      // Throttled commentary - won't repeat same event type within cooldown
+      comment(eventType, text, cooldownMs) {
+        cooldownMs = cooldownMs || 15000;
+        const now = Date.now();
+        if (this.lastCommentary[eventType] && now - this.lastCommentary[eventType] < cooldownMs) return;
+        this.lastCommentary[eventType] = now;
+        this.say(text);
+      },
+
+      // Onboarding sequence
+      startOnboarding() {
+        const msgs = [
+          "Well I'll be! A new roach in these parts! I'm Old Cletus, been prospectin' these here walls for years.",
+          "Use them WASD keys to steer yer roach around. She's got a mind of her own though - drunk steerin' I call it!",
+          "See them other roaches scramblin' around? CLICK to stomp 'em and steal their golden bits!",
+          "Watch out fer them RED BOOTS - those are House Bots and they'll squash ya flat! The richer you get, the more they come sniffin'.",
+          "When the ROACH MOTEL shows up, crawl inside and stay put fer 5 seconds to BANK yer gold. That's the safe stuff!",
+          "Now git out there and start stompin'! Ol' Cletus'll holler if he sees somethin' worth knowin'."
+        ];
+        // Show first immediately, queue the rest
+        this.say(msgs[0]);
+        for (let i = 1; i < msgs.length; i++) {
+          this.queue.push(msgs[i]);
+        }
+      }
+    };
+
+    // Start onboarding after a short delay
+    setTimeout(() => prospector.startOnboarding(), 1500);
+
+    // Hook into game events for contextual commentary
+    // We'll monkey-patch key functions to trigger prospector lines
+
+    const _originalStomp = stomp;
+    stomp = function(x, y) {
+      const killsBefore = state.kills;
+      const balanceBefore = state.balance;
+      _originalStomp(x, y);
+
+      if (state.kills > killsBefore) {
+        const earned = state.balance - balanceBefore;
+        const killLines = [
+          `Stomped the gol'durned roach and got the golden bits he was hidin'! $${earned.toFixed(2)} richer!`,
+          "YEEHAW! Squashed 'im good! That's how we do it in these walls!",
+          "Another one bites the baseboard! Yer gettin' good at this, partner!",
+          "Flatter than a pancake on a Sunday mornin'! Nice stomp!",
+          "That roach never saw it comin'! Keep them boots movin'!",
+        ];
+        prospector.comment('kill', killLines[Math.floor(Math.random() * killLines.length)], 8000);
+      }
+    };
+
+    // Track player HP for damage commentary
+    let _lastPlayerHp = 3;
+    function checkProspectorCommentary() {
+      if (!state.playerRoach || !prospector.onboardingDone) return;
+
+      // Player took damage
+      if (state.playerRoach.hp < _lastPlayerHp) {
+        if (state.playerRoach.hp === 1) {
+          prospector.comment('lowHp', "Yer roach is lookin' mighty weak there, partner! Maybe you oughta heal up before ya end up as a stain on the floor!", 20000);
+        } else {
+          const hurtLines = [
+            "OOF! That had to hurt! Watch them boots, they ain't friendly!",
+            "Careful now! Them House Bots mean business!",
+            "Yer gettin' stomped on! Dodge them red boots!",
+          ];
+          prospector.comment('hurt', hurtLines[Math.floor(Math.random() * hurtLines.length)], 12000);
+        }
+      }
+      _lastPlayerHp = state.playerRoach.hp;
+
+      // Player is getting rich
+      if (state.balance > 10 && state.bankedBalance === 0) {
+        prospector.comment('richWarning', "Whoa nelly! Yer sittin' on a pile of gold there! Better find that Roach Motel and bank it before some boot squashes yer fortune!", 30000);
+      }
+
+      // Player just banked
+      if (state.bankedBalance > 0 && prospector._bankedNotified === undefined) {
+        prospector._bankedNotified = 0;
+      }
+      if (prospector._bankedNotified !== undefined && state.bankedBalance > prospector._bankedNotified) {
+        prospector.comment('banked', "Smart move bankin' them roach bucks! That gold's safe as a roach in a crack now!", 20000);
+        prospector._bankedNotified = state.bankedBalance;
+      }
+
+      // First room transition
+      if (state.currentRoom !== '0,0' && !prospector._roomChanged) {
+        prospector._roomChanged = true;
+        prospector.comment('roomChange', "New room, new roaches! Every room's got different pickin's. Check yer minimap fer the wealthy ones!", 30000);
+      }
+    }
+
     // Game loop
     let botAdjustTimer = 0;
     function gameLoop() {
@@ -1781,6 +2082,9 @@
       // Roach Motel updates
       updateMotelTimer();
       checkMotelCollision();
+
+      // Prospector commentary (check every ~30 frames)
+      if (botAdjustTimer % 30 === 0) checkProspectorCommentary();
 
       // Periodically adjust house bots based on room wealth (every ~60 frames / 1 second)
       botAdjustTimer++;

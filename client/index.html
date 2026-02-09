@@ -296,20 +296,20 @@
     /* ==================== ROACH SPRITES ==================== */
     .roach {
       position: absolute;
-      width: 35px;
-      height: 35px;
+      width: 47px;
+      height: 47px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 200px 200px;
+      background-size: 270px 270px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
-      background-position: -10px -20px;
+      background-position: -14px -27px;
       transition: filter 0.1s;
       transform-origin: center center;
       z-index: 10;
     }
-    .roach.crawling { background-position: -60px -20px; }
-    .roach.hurt { background-position: -110px -20px; }
+    .roach.crawling { background-position: -81px -27px; }
+    .roach.hurt { background-position: -149px -27px; }
     .roach.hurt::after {
       content: '';
       position: absolute;
@@ -324,7 +324,7 @@
       30% { opacity: 0.9; }
       100% { opacity: 0; transform: scale(1); }
     }
-    .roach.dead { background-position: -160px -20px; }
+    .roach.dead { background-position: -216px -27px; }
     .roach.rich { filter: brightness(1.2) sepia(0.8) hue-rotate(10deg) saturate(2); }
     .roach.player-self {
       filter: brightness(1.3) sepia(1) hue-rotate(130deg) saturate(3);
@@ -388,12 +388,12 @@
     /* ==================== BOOT CURSOR ==================== */
     .boot {
       position: absolute;
-      width: 100px;
-      height: 110px;
+      width: 135px;
+      height: 149px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 300px 300px;
-      background-position: -27px -163px;
+      background-size: 405px 405px;
+      background-position: -36px -220px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       pointer-events: none;
@@ -406,7 +406,7 @@
     }
     .boot.hovering { opacity: 0.6; }
     .boot.stomping {
-      background-position: -177px -163px;
+      background-position: -239px -220px;
       animation: stomp 0.15s ease-out;
     }
     @keyframes stomp {
@@ -425,12 +425,12 @@
     /* ==================== HOUSE BOT ==================== */
     .house-bot {
       position: absolute;
-      width: 80px;
-      height: 88px;
+      width: 108px;
+      height: 119px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 240px 240px;
-      background-position: -22px -130px;
+      background-size: 324px 324px;
+      background-position: -30px -176px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       pointer-events: none;
@@ -440,7 +440,7 @@
       filter: brightness(1) sepia(1) hue-rotate(-30deg) saturate(3);
     }
     .house-bot.stomping {
-      background-position: -142px -130px;
+      background-position: -192px -176px;
       animation: bot-stomp 0.25s ease-out;
     }
     @keyframes bot-stomp {
@@ -483,12 +483,12 @@
 
     .splat {
       position: absolute;
-      width: 50px;
-      height: 50px;
+      width: 68px;
+      height: 68px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 200px 200px;
-      background-position: -160px -20px;
+      background-size: 270px 270px;
+      background-position: -216px -27px;
       image-rendering: pixelated;
       pointer-events: none;
       filter: brightness(0.6) sepia(1) hue-rotate(60deg) saturate(2);
@@ -724,6 +724,129 @@
     #log .death { color: #f00; }
     #log .money { color: #ff0; }
 
+    /* ==================== PROSPECTOR NPC ==================== */
+    #prospector-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 9998;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    #prospector-overlay.visible {
+      display: flex;
+    }
+    #prospector-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 420px;
+      width: 90%;
+    }
+    #prospector-face {
+      width: 220px;
+      height: 220px;
+      image-rendering: pixelated;
+      flex-shrink: 0;
+    }
+    #prospector-face.talking {
+      animation: prospector-bob 0.3s ease-in-out infinite, prospector-wiggle 0.15s ease-in-out infinite;
+    }
+    @keyframes prospector-bob {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-6px) rotate(0deg); }
+    }
+    @keyframes prospector-wiggle {
+      0%, 100% { transform: translateY(var(--bob-y, 0)) rotate(-2deg); }
+      50% { transform: translateY(var(--bob-y, 0)) rotate(2deg); }
+    }
+    /* Combined animation using a wrapper for bob + wiggle */
+    #prospector-face-wrap {
+      display: flex;
+      justify-content: center;
+    }
+    #prospector-face-wrap.talking {
+      animation: prospector-bob 0.35s ease-in-out infinite;
+    }
+    #prospector-face-wrap.talking #prospector-face {
+      animation: prospector-wiggle-only 0.12s ease-in-out infinite;
+    }
+    @keyframes prospector-wiggle-only {
+      0%, 100% { transform: rotate(-2.5deg) scale(1); }
+      25% { transform: rotate(1.5deg) scale(1.02); }
+      50% { transform: rotate(3deg) scale(1); }
+      75% { transform: rotate(-1deg) scale(1.01); }
+    }
+    #prospector-balloon {
+      background: #f5f0d0;
+      border: 3px solid #555;
+      padding: 14px 18px;
+      margin-top: -10px;
+      width: 100%;
+      font-family: monospace;
+      font-size: 15px;
+      color: #222;
+      line-height: 1.5;
+      text-align: center;
+      min-height: 60px;
+    }
+    #prospector-buttons {
+      display: flex;
+      gap: 12px;
+      margin-top: 10px;
+      width: 100%;
+    }
+    #prospector-buttons button {
+      flex: 1;
+      padding: 10px 16px;
+      font-family: monospace;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      border: 2px solid;
+    }
+    #btn-go-on {
+      background: #1a3a1a;
+      border-color: #0a0;
+      color: #0f0;
+    }
+    #btn-go-on:hover { background: #2a5a2a; }
+    #btn-go-away {
+      background: #3a1a1a;
+      border-color: #a00;
+      color: #f66;
+    }
+    #btn-go-away:hover { background: #5a2a2a; }
+
+    @media (max-width: 640px) {
+      #prospector-face { width: 200px; height: 200px; }
+      #prospector-balloon { font-size: 13px; padding: 12px 14px; }
+      #prospector-buttons button { font-size: 13px; padding: 12px 10px; }
+    }
+
+    /* ==================== HEAL AFFORDANCE ==================== */
+    #heal-hint {
+      position: absolute;
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: bold;
+      color: #0f0;
+      text-shadow: 0 0 6px #0f0, 1px 1px 0 #000, -1px -1px 0 #000;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 250;
+      opacity: 0;
+      transition: opacity 0.3s;
+      animation: heal-hint-bob 1s ease-in-out infinite;
+    }
+    #heal-hint.visible { opacity: 1; }
+    @keyframes heal-hint-bob {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(-4px); }
+    }
+
     #player-count {
       color: #0ff;
       font-size: 12px;
@@ -804,6 +927,7 @@
       <div id="roach-motel" class="roach-motel hidden"></div>
       <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
       <div id="player-arrow" class="player-arrow"></div>
+      <div id="heal-hint">SPACE TO HEAL</div>
     </div>
   </div>
 
@@ -831,6 +955,22 @@
   </div>
 
   <div id="log"></div>
+
+  <!-- Prospector NPC -->
+  <div id="prospector-overlay">
+    <div id="prospector-inner">
+      <div id="prospector-face-wrap">
+        <img id="prospector-face" src="assets/prospector-closed.png" alt="Prospector">
+      </div>
+      <div id="prospector-balloon">
+        <div id="prospector-text"></div>
+      </div>
+      <div id="prospector-buttons">
+        <button id="btn-go-on">go on...</button>
+        <button id="btn-go-away">go away!</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="game.js"></script>
 </body>

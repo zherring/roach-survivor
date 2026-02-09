@@ -50,6 +50,7 @@ let bootTilt = 0, prevMouseX = 0;
 const container = document.getElementById('game-container');
 const wrapper = document.getElementById('game-wrapper');
 const boot = document.getElementById('boot');
+const healHint = document.getElementById('heal-hint');
 
 // Responsive scaling
 let scaleFactor = 1;
@@ -143,6 +144,7 @@ function handleMessage(msg) {
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
       log(`Crawled to room ${msg.room}`);
+      prospector.onRoomChange(msg.room);
       break;
   }
 }
@@ -206,7 +208,15 @@ function handleTick(msg) {
   if (msg.events) {
     for (const evt of msg.events) {
       handleEvent(evt);
+      prospector.onGameEvent(evt);
     }
+  }
+
+  // Prospector passive checks — once per second (every 20 ticks at 50ms)
+  prospectorTickCount++;
+  if (prospectorTickCount >= 20) {
+    prospectorTickCount = 0;
+    prospector.checkPassive();
   }
 
   // Update other players' boot cursors
@@ -596,6 +606,15 @@ function updateUI() {
   const healBtn = document.getElementById('heal-btn');
   const healDisabled = !myRoachData || myRoachData.hp >= MAX_HP || balance < HEAL_COST;
   healBtn.disabled = healDisabled;
+
+  // Floating "SPACE TO HEAL" hint
+  if (myRoachData && myRoachData.hp < MAX_HP && balance >= HEAL_COST) {
+    healHint.classList.add('visible');
+    healHint.style.left = (myRoachData.x + ROACH_WIDTH / 2) + 'px';
+    healHint.style.top = (myRoachData.y - 12) + 'px';
+  } else {
+    healHint.classList.remove('visible');
+  }
 
   // Mobile HUD
   const mBalance = document.getElementById('m-balance');
@@ -1168,6 +1187,168 @@ container.addEventListener('touchend', () => {
   boot.classList.remove('hovering');
   mouseInContainer = false;
 });
+
+// ==================== PROSPECTOR NPC ====================
+let prospectorTickCount = 0;
+const prospector = {
+  overlay: document.getElementById('prospector-overlay'),
+  faceWrap: document.getElementById('prospector-face-wrap'),
+  face: document.getElementById('prospector-face'),
+  textEl: document.getElementById('prospector-text'),
+  queue: [],
+  typing: false,
+  visible: false,
+  dismissed: false, // "go away!" = permanently gone
+  talkTimer: null,
+  charIndex: 0,
+  currentText: '',
+  // Track which events have been seen — each fires ONCE only
+  seenEvents: new Set(),
+
+  show(text) {
+    if (this.dismissed) return;
+    this.currentText = text;
+    this.charIndex = 0;
+    this.textEl.textContent = '';
+    this.visible = true;
+    this.overlay.classList.add('visible');
+    this.startTalking();
+    this.typing = true;
+    this._typeNext();
+  },
+
+  _typeNext() {
+    if (!this.visible) return;
+    if (this.charIndex < this.currentText.length) {
+      this.charIndex++;
+      this.textEl.textContent = this.currentText.slice(0, this.charIndex);
+      setTimeout(() => this._typeNext(), 25 + Math.random() * 20);
+    } else {
+      this.typing = false;
+      this.stopTalking();
+    }
+  },
+
+  startTalking() {
+    this.face.src = 'assets/prospector-speaking.png';
+    this.faceWrap.classList.add('talking');
+    if (this.talkTimer) clearInterval(this.talkTimer);
+    let mouthOpen = true;
+    this.talkTimer = setInterval(() => {
+      mouthOpen = !mouthOpen;
+      this.face.src = mouthOpen ? 'assets/prospector-speaking.png' : 'assets/prospector-closed.png';
+    }, 120);
+  },
+
+  stopTalking() {
+    if (this.talkTimer) { clearInterval(this.talkTimer); this.talkTimer = null; }
+    this.face.src = 'assets/prospector-closed.png';
+    this.faceWrap.classList.remove('talking');
+  },
+
+  hide() {
+    this.visible = false;
+    this.overlay.classList.remove('visible');
+    this.stopTalking();
+    this.typing = false;
+  },
+
+  // "go on..." — skip to next or close
+  advance() {
+    this.typing = false;
+    if (this.queue.length > 0) {
+      this.show(this.queue.shift());
+    } else {
+      this.hide();
+    }
+  },
+
+  // "go away!" — gone forever
+  goAway() {
+    this.dismissed = true;
+    this.queue = [];
+    this.typing = false;
+    this.hide();
+  },
+
+  say(text) {
+    if (this.dismissed) return;
+    if (this.visible) {
+      this.queue.push(text);
+    } else {
+      this.show(text);
+    }
+  },
+
+  // Only fires ONCE per event type, ever
+  firstTime(eventType, text) {
+    if (this.dismissed || this.seenEvents.has(eventType)) return;
+    this.seenEvents.add(eventType);
+    this.say(text);
+  },
+
+  startOnboarding() {
+    const msgs = [
+      "Well I'll be! A new roach in these parts! I'm Old Cletus. Use them WASD keys to steer yer roach around.",
+      "CLICK to stomp them other roaches and steal their golden bits! Watch out fer them RED BOOTS though.",
+      "When the ROACH MOTEL shows up, crawl inside and hold still to BANK yer gold. Now git stompin'!"
+    ];
+    this.say(msgs[0]);
+    for (let i = 1; i < msgs.length; i++) this.queue.push(msgs[i]);
+  },
+
+  onGameEvent(evt) {
+    if (this.dismissed) return;
+
+    switch (evt.type) {
+      case 'stomp_kill':
+        if (evt.stomperId === myId) {
+          this.firstTime('first_kill', "YEEHAW! Squashed 'im good! That's how we do it in these walls!");
+        }
+        break;
+
+      case 'stomp_hit':
+      case 'bot_hit':
+        if (evt.victimId === myId) {
+          this.firstTime('first_hit', "OOF! Yer roach took a hit! If yer HP gets low, press SPACE or hit Heal to patch up.");
+        }
+        break;
+
+      case 'player_death':
+      case 'bot_kill':
+        if (evt.victimId === myId) {
+          this.firstTime('first_death', "Well shoot! Yer roach got flattened! Don't worry, ya respawn - but ya lose most of yer gold!");
+        }
+        break;
+
+      case 'bank':
+        if (evt.playerId === myId) {
+          this.firstTime('first_bank', "Smart move bankin' them roach bucks! Banked gold is safe even if ya die.");
+        }
+        break;
+    }
+  },
+
+  checkPassive() {
+    if (this.dismissed || !myId) return;
+
+    if (motelData && motelData.active && motelData.room === currentRoom) {
+      this.firstTime('first_motel_here', "HOT DIGGITY! The Roach Motel's here! Crawl inside and hold still to bank yer gold!");
+    }
+
+    if (balance > 8) {
+      this.firstTime('first_rich', "Whoa nelly! Yer carryin' a pile of gold! Find that Roach Motel before some boot squashes yer fortune!");
+    }
+  },
+
+  onRoomChange() {
+    this.firstTime('first_room', "New room! Check yer minimap - different rooms got different pickin's.");
+  }
+};
+
+document.getElementById('btn-go-on').addEventListener('click', () => prospector.advance());
+document.getElementById('btn-go-away').addEventListener('click', () => prospector.goAway());
+setTimeout(() => prospector.startOnboarding(), 2000);
 
 // ==================== GAME LOOP ====================
 let lastInputSend = 0;

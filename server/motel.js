@@ -62,10 +62,16 @@ export class Motel {
           return events;
         }
       } else {
-        // Left motel — reset
+        // Left motel — degrade progress instead of resetting
         if (this.savingProgress.has(player.id)) {
-          this.savingProgress.delete(player.id);
-          events.push({ type: 'bank_cancel', playerId: player.id });
+          const prev = this.savingProgress.get(player.id);
+          const degraded = prev - (0.5 / 20); // lose 0.5s per second (half the gain rate)
+          if (degraded <= 0) {
+            this.savingProgress.delete(player.id);
+            events.push({ type: 'bank_cancel', playerId: player.id });
+          } else {
+            this.savingProgress.set(player.id, degraded);
+          }
         }
       }
     }
