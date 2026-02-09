@@ -136,10 +136,17 @@
       #connection-status {
         position: fixed;
         top: 2px;
-        right: 6px;
+        right: 46px;
         z-index: 3000;
         font-size: 9px;
         margin: 0;
+      }
+      #mute-btn {
+        top: 2px;
+        right: 4px;
+        width: 30px;
+        height: 30px;
+        font-size: 16px;
       }
 
       /* Game fills width, aspect ratio preserved */
@@ -853,6 +860,28 @@
       margin-bottom: 5px;
     }
 
+    /* ==================== MUTE BUTTON ==================== */
+    #mute-btn {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      z-index: 3000;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid #444;
+      color: #aaa;
+      font-family: monospace;
+      font-size: 18px;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    #mute-btn:hover { border-color: #888; color: #fff; }
+    #mute-btn.muted { color: #f44; border-color: #a00; }
+
     /* ==================== VIRTUAL JOYSTICK ==================== */
     #joystick-zone {
       display: none;
@@ -886,6 +915,7 @@
   </style>
 </head>
 <body>
+  <button id="mute-btn" title="Toggle sound">♪</button>
   <h1>$ROACH MULTIPLAYER</h1>
   <div id="connection-status">Connecting...</div>
   <div id="player-count"></div>

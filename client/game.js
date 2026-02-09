@@ -6,6 +6,99 @@ import {
   HEAL_COST, MAX_HP,
 } from '/shared/constants.js';
 
+// ==================== AUDIO ====================
+const AudioManager = {
+  ctx: null,
+  buffers: {},
+  muted: false,
+  loaded: false,
+  unlocked: false,
+
+  async init() {
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const sounds = {
+      stomp_kill: 'assets/roachstomp_dead.wav',
+      stomp_hit: 'assets/roachstomp_alive.wav',
+      player_dead: 'assets/roach_player_dead.wav',
+      coin: 'assets/pickupCoin.wav',
+      bank: 'assets/bank.wav',
+      click: 'assets/click.wav',
+      synth: 'assets/synth.wav',
+    };
+    const entries = Object.entries(sounds);
+    await Promise.all(entries.map(async ([key, url]) => {
+      try {
+        const resp = await fetch(url);
+        const buf = await resp.arrayBuffer();
+        this.buffers[key] = await this.ctx.decodeAudioData(buf);
+      } catch (e) {
+        console.warn(`Failed to load sound: ${key}`, e);
+      }
+    }));
+    // Create reversed coin buffer for "losing money" sound
+    const coinBuf = this.buffers.coin;
+    if (coinBuf) {
+      const reversed = this.ctx.createBuffer(coinBuf.numberOfChannels, coinBuf.length, coinBuf.sampleRate);
+      for (let ch = 0; ch < coinBuf.numberOfChannels; ch++) {
+        const srcData = coinBuf.getChannelData(ch);
+        const revData = reversed.getChannelData(ch);
+        for (let i = 0; i < srcData.length; i++) {
+          revData[i] = srcData[srcData.length - 1 - i];
+        }
+      }
+      this.buffers.coin_rev = reversed;
+    }
+    this.loaded = true;
+  },
+
+  // Mobile browsers require a user gesture to unlock AudioContext
+  unlock() {
+    if (this.unlocked || !this.ctx) return;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+    this.unlocked = true;
+  },
+
+  play(name, volume = 1) {
+    if (this.muted || !this.loaded || !this.buffers[name]) return;
+    this.unlock();
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.buffers[name];
+    const gain = this.ctx.createGain();
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(this.ctx.destination);
+    source.start(0);
+  },
+
+  // Play coin chime count times staggered
+  playCoins(count, volume = 0.5) {
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => this.play('coin', volume), i * 80);
+    }
+  },
+
+  // Reversed coin sound — money leaving
+  playReversedCoins(count, volume = 0.4) {
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => this.play('coin_rev', volume), i * 80);
+    }
+  },
+
+  toggleMute() {
+    this.muted = !this.muted;
+    return this.muted;
+  }
+};
+
+AudioManager.init();
+
+// Unlock audio on first user interaction (mobile requirement)
+const unlockAudio = () => AudioManager.unlock();
+document.addEventListener('click', unlockAudio, { once: true });
+document.addEventListener('touchstart', unlockAudio, { once: true });
+
 // ==================== STATE ====================
 let myId = null;
 let myName = '';
@@ -130,7 +223,7 @@ function handleMessage(msg) {
       buildMinimap();
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
-      log(`<span style="color:#0ff">You are ${myName}!</span>`);
+      log(`<span style="color:#0ff">You are ${escapeHtml(myName)}!</span>`);
       log('Your roach is <span style="color:#0ff">CYAN</span>. <span style="color:#a00">RED BOOTS</span> hunt wealthy roaches.');
       break;
 
@@ -143,6 +236,7 @@ function handleMessage(msg) {
       clearEntities();
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
+      AudioManager.play('synth', 0.3);
       log(`Crawled to room ${msg.room}`);
       prospector.onRoomChange(msg.room);
       break;
@@ -249,32 +343,41 @@ function handleTick(msg) {
 function handleEvent(evt) {
   switch (evt.type) {
     case 'stomp_kill':
+      AudioManager.play('stomp_kill', 0.7);
       if (evt.stomperId === myId) {
         kills++;
         log(`<span class="kill">KILLED roach!</span> <span class="money">+$${evt.reward.toFixed(2)}</span>`);
         showCoinShower(evt.x, evt.y, evt.reward);
+        const killChimes = Math.max(1, Math.min(5, Math.ceil(evt.reward)));
+        AudioManager.playCoins(killChimes, 0.5);
       }
       showSplat(evt.x, evt.y);
       break;
     case 'stomp_hit':
+      AudioManager.play('stomp_hit', 0.5);
       if (evt.victimId === myId) {
-        log(`<span class="death">You got stomped! (${evt.hp}/2 HP)</span>`);
+        log(`<span class="death">You got stomped! (${evt.hp}/${MAX_HP} HP)</span>`);
       }
       break;
     case 'stomp_miss':
       break;
     case 'bot_stomp':
+      AudioManager.play('stomp_hit', 0.4);
       triggerBotStomp(evt.botId);
       break;
     case 'bot_kill':
+      AudioManager.play('stomp_kill', 0.6);
       if (evt.victimId === myId) {
         log(`<span class="death">HOUSE BOT killed your roach! Lost $${evt.lost.toFixed(2)}</span>`);
+        AudioManager.play('player_dead', 0.8);
+        AudioManager.playReversedCoins(3, 0.5);
         lastAliveReset = Date.now();
         aliveTime = 0;
       }
       showSplat(evt.x, evt.y);
       break;
     case 'bot_hit':
+      AudioManager.play('stomp_hit', 0.4);
       if (evt.victimId === myId) {
         log(`<span class="death">House bot hit you! (${evt.hp}/2 HP)</span>`);
       }
@@ -282,15 +385,21 @@ function handleEvent(evt) {
     case 'player_death':
       if (evt.victimId === myId) {
         log(`<span class="death">YOU DIED! Lost $${evt.lost.toFixed(2)}</span>`);
+        AudioManager.play('player_dead', 0.8);
+        AudioManager.playReversedCoins(3, 0.5);
         lastAliveReset = Date.now();
         aliveTime = 0;
       } else if (evt.killerId === myId) {
         log(`<span class="kill">You killed a player!</span>`);
+        AudioManager.playCoins(5, 0.5);
       }
       break;
     case 'bank':
       if (evt.playerId === myId) {
         log(`<span style="color:#f0c040">BANKED $${evt.amount.toFixed(2)}! Total: $${evt.totalBanked.toFixed(2)}</span>`);
+        AudioManager.play('bank', 0.7);
+        const bankChimes = Math.max(1, Math.min(5, Math.ceil(evt.amount)));
+        AudioManager.playCoins(bankChimes, 0.45);
         showBankEffect(evt.amount, evt.totalBanked);
       }
       break;
@@ -316,7 +425,7 @@ function updateRoachEl(data) {
     if (data.isPlayer && data.name) {
       const nameEl = document.createElement('div');
       nameEl.className = 'roach-name';
-      nameEl.textContent = data.id === myId ? `(you) ${data.name}` : data.name;
+      nameEl.textContent = data.id === myId ? `(you) ${data.name || ''}` : (data.name || '');
       container.appendChild(nameEl);
       nameEls.set(data.id, nameEl);
     }
@@ -646,6 +755,10 @@ function updateUI() {
   document.getElementById('player-count').textContent = `Players in room: ${playerCount}`;
 }
 
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function log(msg) {
   const logEl = document.getElementById('log');
   logEl.innerHTML = msg + '<br>' + logEl.innerHTML;
@@ -732,7 +845,9 @@ function showHealEffect() {
   setTimeout(() => { sourceBalanceEl.style.color = ''; }, 400);
 
   // Green heal burst on roach after coins arrive
+  AudioManager.playReversedCoins(1, 0.3);
   setTimeout(() => {
+    AudioManager.play('synth', 0.4);
     const burst = document.createElement('div');
     burst.className = 'heal-burst';
     burst.style.left = (predictedX + ROACH_WIDTH / 2 - 30) + 'px';
@@ -1083,6 +1198,7 @@ container.addEventListener('click', (e) => {
   boot.classList.add('stomping');
   showShockwave(x, y - BOOT_HEIGHT * 0.3);
   shakeScreen();
+  AudioManager.play('click', 0.3);
 
   send({ type: 'stomp', x, y, seq: inputSeq });
 });
@@ -1172,6 +1288,7 @@ container.addEventListener('touchstart', (e) => {
   boot.classList.add('stomping');
   showShockwave(x, y - BOOT_HEIGHT * 0.3);
   shakeScreen();
+  AudioManager.play('click', 0.3);
   send({ type: 'stomp', x, y, seq: inputSeq });
 });
 container.addEventListener('touchmove', (e) => {
@@ -1350,6 +1467,15 @@ document.getElementById('btn-go-on').addEventListener('click', () => prospector.
 document.getElementById('btn-go-away').addEventListener('click', () => prospector.goAway());
 setTimeout(() => prospector.startOnboarding(), 2000);
 
+// ==================== MUTE BUTTON ====================
+const muteBtn = document.getElementById('mute-btn');
+muteBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const muted = AudioManager.toggleMute();
+  muteBtn.textContent = muted ? '✕' : '♪';
+  muteBtn.classList.toggle('muted', muted);
+});
+
 // ==================== GAME LOOP ====================
 let lastInputSend = 0;
 let lastKeys = { w: false, a: false, s: false, d: false };
@@ -1365,7 +1491,6 @@ function gameLoop() {
     send({
       type: 'input',
       seq: inputSeq,
-      keys: { ...keys },
       x: predictedX,
       y: predictedY,
       vx: predictedVx,
