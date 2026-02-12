@@ -21,11 +21,12 @@ This document started as a proposal (see git history for the original draft). It
 ### Combat & Economy
 - **Proposed:** Server-authoritative stomps, 90% death penalty
 - **Built:** Exactly as proposed, plus:
-  - AoE gradient damage (probability falloff from stomp center, 60px radius)
+  - AoE gradient damage (probability falloff from stomp center, 81px radius — scaled up from original 60px with sprite size increase)
   - HP reduced to 2 (was 3 in PRD)
   - House bots have wealth-weighted targeting (`weight = balance + 0.1`)
   - Bot pursuit speed scales with target wealth (`3 + min(balance * 0.15, 2)`)
   - Combo kill VFX system (coin shower scales with consecutive kills within 1.5s)
+  - Balance math fix: death penalty applied before `die()` so victims keep exactly 10%
 
 ### Room Grid
 - **Proposed:** 3x3 for v1 (expandable to 10x10)
@@ -33,7 +34,7 @@ This document started as a proposal (see git history for the original draft). It
 
 ### Motel Banking
 - **Proposed:** Spawn every 15s, stay 10s, 5s to bank
-- **Built:** Always active (0s spawn interval), stays 12s before relocating, 2s to bank. Much more accessible — banking is a constant strategic option, not a rare event.
+- **Built:** Always active (0s spawn interval), stays 12s before relocating, 2s to bank. Much more accessible — banking is a constant strategic option, not a rare event. Banking progress degrades gradually when player leaves the boundary (instead of hard reset).
 
 ### Protocol
 - **Proposed:** `input.move`, `state.delta`, etc.
@@ -41,10 +42,17 @@ This document started as a proposal (see git history for the original draft). It
 
 | Direction | Messages |
 |-----------|----------|
-| Client → Server | `input` (position+velocity), `stomp` (x,y), `heal` |
-| Server → Client | `welcome` (full state), `tick` (room snapshot + events + personal state), `room_enter` (new room snapshot) |
+| Client -> Server | `input` (position+velocity), `stomp` (x,y), `heal` |
+| Server -> Client | `welcome` (full state), `tick` (room snapshot + events + personal state), `room_enter` (new room snapshot) |
 
 **Key difference from proposal:** We send full room snapshots per tick, not deltas. At 20 TPS with ~20 entities per room, the JSON is small enough that delta compression isn't worth the complexity yet.
+
+### Security Hardening (added post-initial build)
+- **Rate limiting:** 60 messages/sec per player, silently dropped above threshold
+- **Input validation:** Strict numeric sanitization, finite guards, clamping on all client values
+- **Heal cooldown:** 200ms server-side to prevent spam
+- **XSS prevention:** `escapeHtml()` on any player-sourced strings in log output
+- **Path traversal protection:** Static file server validates paths
 
 ### What's NOT Built Yet
 
@@ -55,33 +63,42 @@ This document started as a proposal (see git history for the original draft). It
 | Admin Console | Not started | No ops tooling |
 | Wallet Connect | Not started | No auth at all — anonymous sessions |
 | State Deltas | Skipped | Full snapshots instead (simpler, works fine) |
-| Reconnect Handling | Not started | Disconnect = player removed |
+| Session Restore | Partial | Client auto-reconnects on disconnect, but no session token — player starts fresh |
 | Room Sharding (multi-process) | Not started | Single process handles all rooms |
 
 ### Current File Map
 
 ```
-kyiv/
+kolkata/
 ├── server/
-│   ├── index.js           # HTTP static server + WebSocket setup (77 lines)
-│   ├── game-server.js     # Tick loop, sessions, room transitions (229 lines)
-│   ├── room.js            # Per-room sim: physics, stomps, AoE, spawns (263 lines)
-│   ├── roach.js           # Entity: movement, speed calc, hit/die (157 lines)
+│   ├── index.js           # HTTP static server + WebSocket setup (80 lines)
+│   ├── game-server.js     # Tick loop, sessions, room transitions, rate limiting (339 lines)
+│   ├── room.js            # Per-room sim: physics, stomps, AoE, spawns (266 lines)
+│   ├── roach.js           # Entity: movement, speed calc, hit/die (185 lines)
 │   ├── house-bot.js       # Bot AI: targeting, pursuit, AoE stomp (156 lines)
-│   └── motel.js           # Banking: spawn/despawn, collision, progress (109 lines)
+│   └── motel.js           # Banking: spawn/despawn, collision, progress (115 lines)
 ├── client/
-│   ├── index.html         # Full UI + CSS (471 lines)
-│   ├── game.js            # Network, prediction, rendering, VFX (793 lines)
+│   ├── index.html         # Full UI + CSS + mobile layout + prospector NPC (1007 lines)
+│   ├── game.js            # Network, prediction, rendering, VFX, audio, touch controls (1516 lines)
 │   └── assets/
 │       ├── game-sprite.png
-│       └── roach-motel-sprite.jpeg
+│       ├── roach-motel-sprite.jpeg
+│       ├── prospector-closed.png
+│       ├── prospector-speaking.png
+│       ├── roachstomp_alive.wav
+│       ├── roachstomp_dead.wav
+│       ├── roach_player_dead.wav
+│       ├── pickupCoin.wav
+│       ├── bank.wav
+│       ├── click.wav
+│       └── synth.wav
 ├── shared/
-│   └── constants.js       # All tuning values (41 lines)
+│   └── constants.js       # All tuning values (42 lines)
 ├── package.json           # ws dependency, "start" script
 └── AGENT-IMPLEMENTATION.md # Agent API plan (not built yet)
 ```
 
-**Total: ~2,200 lines of game code.** Single dependency (`ws`).
+**Total: ~3,664 lines of game code.** Single dependency (`ws`).
 
 ### Current Game Constants (tuned through playtesting)
 
@@ -94,103 +111,108 @@ kyiv/
 | INCOME_RATE | $0.01/sec | Slow passive accumulation |
 | PLAYER_BASE_SPEED | 2.5 | Feels responsive with drunk steering |
 | WEALTH_SPEED_PENALTY_MAX | 1.5 | Rich roaches noticeably slower |
-| STOMP_AOE_RADIUS | 60px | Meaningful splash zone |
+| STOMP_AOE_RADIUS | 81px | Scaled up with sprite size increase |
 | BOTS_PER_WEALTH | $5 | Aggressive bot scaling |
 | MAX_BOTS_PER_ROOM | 8 | Can get very dangerous |
 | BOT_STOMP_COOLDOWN | 600-900ms | Fast bot attacks |
 | MOTEL_SAVE_TIME | 2s | Quick banking |
 | MOTEL_STAY_DURATION | 12s | Always a motel somewhere |
+| ROACH_SIZE | 47px | Scaled ~35% from original 35px |
+| BOOT_SIZE | 135x149px | Scaled ~35% from original 100px |
+| BOT_SIZE | 108x119px | Scaled ~35% from original 80px |
 
 ---
 
 ## Part 2: Milestone Roadmap (M1-M8)
 
-### M1: Deploy & Share
+### M1: Deploy & Share -- DONE
 **Goal:** Shareable URL — anyone with the link plays instantly.
-**Effort:** 30 minutes
-**Blocked by:** Nothing
 
-What to do:
-- Deploy to Railway (`railway up` or connect GitHub repo)
-- Railway auto-detects Node via `package.json`, uses `npm start` → `node server/index.js`
-- PORT comes from `process.env.PORT` (already handled)
-- WebSocket upgrades work on Railway out of the box
-- Verify: open on phone + laptop simultaneously, confirm multiplayer works
+What was done:
+- Server handles `process.env.PORT` for Railway/cloud deployment
+- Package.json `start` script works out of the box (`node server/index.js`)
+- WebSocket upgrades handled correctly
+- Static file serving with path traversal protection
+- Server fixes for Railway landed in PR #3
 
-**Why first:** Everything else is pointless if nobody can play it. This is the lowest-effort, highest-leverage step.
+**Status:** Code is deploy-ready. Railway deployment is a manual step (connect repo, `railway up`).
 
 ---
 
-### M2: Visual Polish — Prototype Feature Parity
+### M2: Visual Polish -- DONE
 **Goal:** Match the single-player prototype's visual richness in multiplayer.
-**Effort:** Half day
-**Blocked by:** Nothing
 
-What to build:
-1. **Roach scaling with wealth** — CSS `transform: scale()` based on balance (1x at $0, up to 3x at $50+). Already in the prototype, just needs porting to the multiplayer renderer.
-2. **Roach rotation** — face movement direction via `Math.atan2(vy, vx)` → CSS rotate. Already in prototype.
-3. **Other players' boot cursors visible** — server broadcasts each player's cursor position, other clients render a semi-transparent boot. Needs new message field in `input` (cursor x,y) and render logic.
-4. **NPC/player roaches flee from player boots** — currently they only flee house bots. Add player cursor positions to the flee calculation in `server/roach.js`.
+What was built:
+1. **Roach scaling with wealth** — all roaches (players + NPCs) scale via CSS transform based on balance (`1 + min(balance/25, 2)`, so 1x at $0 up to 3x at $50+). Applied in render loop for every entity.
+2. **Roach rotation** — all roaches face movement direction via `Math.atan2(vy, vx)` -> CSS rotate
+3. **Other players' boot cursors visible** — server broadcasts cursor positions, other clients render semi-transparent boots
+4. **Sprite scaling** — all sprites scaled ~35% larger (roach 35->47px, boot 100->135px, bot 80->108px) with matching AoE radius bump (60->81px) — PR #5
+5. **Combo kill VFX** — coin shower animations scale with consecutive kills — PR #2
+6. **Stomp VFX** — screen shake, shockwave effects on impact — PR #2
+7. **Prospector tutorial NPC** — "Old Cletus" with typewriter dialogue, event-driven onboarding (first kill, first death, first bank, etc.), dismissible — PR #5
+8. **Floating heal hint** — "SPACE TO HEAL" appears above injured player — PR #5
+9. **Death splat animations, banking progress VFX** — visual feedback for all major actions
 
-Files: `client/game.js` (render scaling/rotation/other boots), `server/game-server.js` (broadcast cursor positions), `server/roach.js` (flee from player cursors)
-
-**Why second:** These are the most visible "this feels like a real game" improvements. Roaches that grow fat and slow as they get rich is a core part of the game's visual storytelling.
-
----
-
-### M3: Sound Design
-**Goal:** Audio feedback for all major actions — stomp, kill, coin, bot, motel.
-**Effort:** Half day
-**Blocked by:** Nothing (can parallelize with M2)
-
-What to build:
-1. Web Audio API sound system (small AudioContext manager)
-2. Sound effects: stomp impact (hit vs miss), death squelch, coin collect, bot stomp rumble, motel banking chime, ambient skittering
-3. Volume controls / mute button
-4. Generate or source 6-8 short sound clips (can use free SFX libraries or AI generation)
-
-Files: `client/game.js` (audio hookup), `client/assets/` (sound files), `client/index.html` (mute button)
-
-**Why third:** Sound is what makes the difference between "prototype" and "game". Stomping without a satisfying crunch feels hollow. This is high-impact for minimal code.
+**Not ported from prototype (deprioritized):**
+- NPC/player roaches flee from player boot cursors — gameplay impact, could be added later
 
 ---
 
-### M4: Mobile Touch Controls
-**Goal:** Playable on phones — huge for viral sharing.
-**Effort:** 1 day
-**Blocked by:** M1 (need deployment to test on real phones)
+### M3: Sound Design -- DONE
+**Goal:** Audio feedback for all major actions.
 
-What to build:
-1. **Virtual joystick** — touch drag in bottom-left for movement (maps to WASD forces)
-2. **Tap to stomp** — touch anywhere in game area to stomp at that position
-3. **Responsive layout** — game container scales to viewport width, stats bar wraps
-4. **Touch-friendly heal button** — larger hit target
-5. **Prevent default touch behaviors** — no scroll/zoom on game container
-
-Files: `client/game.js` (touch input handlers, joystick logic), `client/index.html` (responsive CSS, joystick element)
-
-**Why fourth:** Mobile is where viral sharing happens — someone sends a link in a group chat, everyone opens it on their phone. Without touch controls, that entire funnel is broken.
+What was built:
+1. **AudioManager** — Web Audio API with buffer preloading and mobile unlock
+2. **7 sound effects:**
+   - `stomp_kill` — roachstomp_dead.wav (kill confirmed)
+   - `stomp_hit` — roachstomp_alive.wav (damage dealt)
+   - `player_dead` — roach_player_dead.wav (you died)
+   - `coin` — pickupCoin.wav (income/loot)
+   - `bank` — bank.wav (motel banking chime)
+   - `click` — click.wav (UI interaction)
+   - `synth` — synth.wav (ambient/event)
+3. **Reversed coin buffer** — plays backwards for "losing money" feedback
+4. **Staggered coin chimes** — `playCoins()` / `playReversedCoins()` for multi-coin events
+5. **Mute toggle support**
 
 ---
 
-### M5: Persistence & Reconnection
+### M4: Mobile Touch Controls -- DONE
+**Goal:** Playable on phones.
+
+What was built:
+1. **Virtual joystick** — touch drag for movement, auto-shown on touch devices
+2. **Tap to stomp** — touch anywhere in game area
+3. **Responsive layout** — game container scales to viewport, separate mobile HUD
+4. **Mobile-specific UI** — `#mobile-hud`, `#mobile-heal-bar`, `#mobile-minimap`, `#mobile-motel-info`
+5. **Touch behavior prevention** — `touch-action: none` on game container
+6. **Mobile detection** — `'ontouchstart' in window || navigator.maxTouchPoints > 0`
+7. **Input validation hardened for mobile** — aligned sprite sizing with hitboxes, anchored VFX to visible mobile targets — PR #4
+
+---
+
+### M5: Persistence & Reconnection -- NOT STARTED
 **Goal:** Banked balances survive server restarts. Players can reconnect after drops.
 **Effort:** 1 day
-**Blocked by:** M1 (need to know deploy environment for storage)
+**Blocked by:** Nothing (deploy-ready)
 
-What to build:
+What exists now:
+- Client auto-reconnects on WebSocket close (2s delay) — but starts a fresh session
+- No session tokens, no state restoration, no persistence
+
+What still needs to be built:
 1. **SQLite (or JSON file) persistence** for banked balances, player names, upgrade state
-2. **Session tokens** — localStorage on client, cookie or generated ID, maps to persistent player record
-3. **Reconnect logic** — client auto-reconnects on WebSocket close, sends session token, server restores player to their room with banked balance intact
-4. **Graceful shutdown** — server writes state to disk on SIGTERM (Railway sends this before restart)
+2. **Session tokens** — localStorage on client, generated ID maps to persistent player record
+3. **Reconnect with restore** — server restores player to their room with banked balance intact
+4. **Graceful shutdown** — server writes state to disk on SIGTERM
 
-Files: new `server/db.js`, `server/game-server.js` (session restore, shutdown hook), `client/game.js` (reconnect loop, session storage)
+Files: new `server/db.js`, `server/game-server.js` (session restore, shutdown hook), `client/game.js` (session storage)
 
-**Why fifth:** Once real players are playing (M1) and having fun (M2-M4), losing progress on server restart becomes the #1 frustration. This is the foundation for everything that follows (upgrades, leaderboards, crypto).
+**Why next:** Losing progress on server restart is the #1 frustration for real players. This is the foundation for upgrades, leaderboards, and crypto.
 
 ---
 
-### M6: Permanent Upgrades
+### M6: Permanent Upgrades -- NOT STARTED
 **Goal:** Give players something to spend $ROACH on that persists across deaths.
 **Effort:** 1-2 days
 **Blocked by:** M5 (needs persistence)
@@ -205,11 +227,9 @@ What to build:
 
 Files: `server/game-server.js` (purchase handler), `server/room.js` (apply modifiers), `server/db.js` (persist upgrades), `client/game.js` (shop UI, visual changes)
 
-**Why sixth:** Upgrades create the spending imperative — the core economic tension. Right now there's nothing to do with money except bank it. Upgrades make the economy loop work: earn → spend on upgrades (safe) vs hoard (risky).
-
 ---
 
-### M7: Agent API (MoltBots-style)
+### M7: Agent API (MoltBots-style) -- NOT STARTED
 **Goal:** AI agents can connect and play alongside humans.
 **Effort:** Half day
 **Blocked by:** Nothing (can be done anytime)
@@ -224,11 +244,9 @@ What to build (documented in `AGENT-IMPLEMENTATION.md`):
 
 Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent flag)
 
-**Why seventh:** The protocol is already agent-friendly. This is mostly a packaging/documentation exercise. Cool demo potential but doesn't affect core gameplay.
-
 ---
 
-### M8: Crypto Integration
+### M8: Crypto Integration -- NOT STARTED
 **Goal:** Real $ROACH token economy on Base chain.
 **Effort:** Multiple days, separate workstream
 **Blocked by:** M5 (persistence), M6 (upgrades — need something to spend on)
@@ -243,36 +261,54 @@ What to build:
 
 Files: new `server/indexer.js`, new `server/admin.js`, `client/game.js` (wallet UI), `server/game-server.js` (withdrawal timer logic)
 
-**Why last:** This is the biggest lift, needs the most infrastructure, and only matters once you have real players engaged. The game needs to be fun and sticky first. Crypto is the monetization layer, not the fun layer.
-
 ---
 
-## Part 3: Recommendations
+## Part 3: Current Status & Path to Shareable
 
-### Priority Order
+### What's Done (M1-M4)
 ```
-M1 (Deploy) → M2 (Visual) → M3 (Sound) → M4 (Mobile)
-    ↓
-"Shareable, impressive, playable everywhere"
-    ↓
-M5 (Persistence) → M6 (Upgrades) → M7 (Agents) → M8 (Crypto)
-    ↓
-"Sticky, economic, expandable"
+M1 (Deploy)  -- DONE  -- Server is deploy-ready, Railway-compatible
+M2 (Visual)  -- DONE  -- Sprites scaled, VFX, prospector NPC, heal hints
+M3 (Sound)   -- DONE  -- 7 SFX, AudioManager, mobile unlock, mute
+M4 (Mobile)  -- DONE  -- Joystick, tap-stomp, responsive layout, mobile HUD
 ```
+
+**The game is fully playable and shareable right now.** Desktop + mobile, sound, tutorial NPC, visual polish. The only manual step is connecting the repo to Railway (or any Node host).
+
+### What's NOT Done (M5-M8)
+```
+M5 (Persistence)  -- NOT STARTED  -- In-memory only, no session restore
+M6 (Upgrades)     -- NOT STARTED  -- Nothing to spend money on yet
+M7 (Agents)       -- NOT STARTED  -- Protocol is ready, needs SDK/docs
+M8 (Crypto)       -- NOT STARTED  -- Needs M5+M6 first
+```
+
+### Bonus Work Completed (not in original milestones)
+- **Prospector tutorial NPC** — full onboarding system with event-driven contextual tips
+- **Security hardening** — rate limiting, input validation, XSS prevention, path traversal protection
+- **Balance math fix** — death penalty correctly applied before `die()`
+- **Motel banking improvement** — gradual progress degradation instead of hard reset
+- **Heal cooldown** — 200ms server-side to prevent spam
+
+### To Make It "Shareable" (minimum viable share)
+
+**Already done — just deploy:**
+1. Connect GitHub repo to Railway (or `railway up`)
+2. Verify multiplayer works on phone + laptop simultaneously
+3. Share the URL
+
+**Nice-to-haves before sharing (quick wins, ~1-2 hours each):**
+- **Player count indicator** — show "X players online" (data exists, just needs UI)
+- **Kill feed** — "[Player] stomped [Player]" visible to room (adds social pressure)
+- **Leaderboard** — in-memory top-10 by banked balance on connection screen (no persistence needed)
 
 ### What to Skip or Defer
-- **10x10 grid** — 3x3 is fine until you have 50+ concurrent players. More rooms = more empty rooms.
-- **State deltas** — full snapshots work. Only optimize if bandwidth becomes an issue.
-- **TypeScript migration** — not worth the friction for the current codebase size (~2200 lines). Revisit if it grows past 5k.
-- **Multi-process sharding** — single process handles hundreds of players. Only shard if you hit CPU limits.
+- **10x10 grid** — 3x3 is fine until you have 50+ concurrent players
+- **State deltas** — full snapshots work fine at current scale
+- **TypeScript migration** — not worth it at ~3,600 lines
+- **Multi-process sharding** — single process handles hundreds of players
 
 ### What to Watch For
 - **Movement feel on real networks** — the client-authoritative model feels great on localhost but needs testing with 50-100ms latency. May need to tune the 50px reconciliation threshold.
 - **Bot difficulty scaling** — with 8 max bots and 2 HP, rooms can become kill zones. May need to cap AoE or add bot flee behavior.
 - **Motel balance** — 2s banking is very fast. If money accumulates too easily, the death penalty loses its sting. Monitor average banked balances.
-
-### Quick Wins Not in the Milestones
-- **Player count indicator** — show "X players online" (already have the data, just need UI)
-- **Kill feed** — show "[Player] killed [Player]" visible to all players in room
-- **Leaderboard** — simple in-memory top-10 by banked balance, displayed on connection screen
-- **Spectator mode** — WebSocket connection that receives ticks but can't send input (trivial)
