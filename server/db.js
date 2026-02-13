@@ -22,6 +22,13 @@ class RoachDB {
         name TEXT NOT NULL,
         banked_balance REAL DEFAULT 0,
         total_kills INTEGER DEFAULT 0,
+        boot_size_level INTEGER DEFAULT 0,
+        multi_stomp_level INTEGER DEFAULT 0,
+        rate_of_fire_level INTEGER DEFAULT 0,
+        gold_magnet_level INTEGER DEFAULT 0,
+        wall_bounce_level INTEGER DEFAULT 0,
+        idle_income_level INTEGER DEFAULT 0,
+        shell_armor_level INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         last_seen INTEGER NOT NULL
       );
@@ -36,6 +43,22 @@ class RoachDB {
         FOREIGN KEY (player_id) REFERENCES players(id)
       );
     `);
+
+    // Backward-compatible migrations for pre-M6 databases.
+    const columns = this.db.prepare('PRAGMA table_info(players)').all().map((c) => c.name);
+    const addColumn = (name, ddl) => {
+      if (!columns.includes(name)) {
+        this.db.exec(ddl);
+        columns.push(name);
+      }
+    };
+    addColumn('boot_size_level', 'ALTER TABLE players ADD COLUMN boot_size_level INTEGER DEFAULT 0');
+    addColumn('multi_stomp_level', 'ALTER TABLE players ADD COLUMN multi_stomp_level INTEGER DEFAULT 0');
+    addColumn('rate_of_fire_level', 'ALTER TABLE players ADD COLUMN rate_of_fire_level INTEGER DEFAULT 0');
+    addColumn('gold_magnet_level', 'ALTER TABLE players ADD COLUMN gold_magnet_level INTEGER DEFAULT 0');
+    addColumn('wall_bounce_level', 'ALTER TABLE players ADD COLUMN wall_bounce_level INTEGER DEFAULT 0');
+    addColumn('idle_income_level', 'ALTER TABLE players ADD COLUMN idle_income_level INTEGER DEFAULT 0');
+    addColumn('shell_armor_level', 'ALTER TABLE players ADD COLUMN shell_armor_level INTEGER DEFAULT 0');
   }
 
   _prepareStatements() {
@@ -57,6 +80,13 @@ class RoachDB {
       ),
       updateBanked: this.db.prepare(
         'UPDATE players SET banked_balance = ?, last_seen = ? WHERE id = ?'
+      ),
+      updateUpgrades: this.db.prepare(
+        `UPDATE players
+         SET boot_size_level = ?, multi_stomp_level = ?, rate_of_fire_level = ?,
+             gold_magnet_level = ?, wall_bounce_level = ?, idle_income_level = ?,
+             shell_armor_level = ?, last_seen = ?
+         WHERE id = ?`
       ),
       incrementKills: this.db.prepare(
         'UPDATE players SET total_kills = total_kills + 1, last_seen = ? WHERE id = ?'
@@ -88,6 +118,27 @@ class RoachDB {
 
   updateBankedBalance(playerId, newTotal) {
     this._stmts.updateBanked.run(newTotal, Date.now(), playerId);
+  }
+
+  updateUpgrades(playerId, upgrades) {
+    const bootSize = Number.isFinite(upgrades?.bootSize) ? upgrades.bootSize : 0;
+    const multiStomp = Number.isFinite(upgrades?.multiStomp) ? upgrades.multiStomp : 0;
+    const rateOfFire = Number.isFinite(upgrades?.rateOfFire) ? upgrades.rateOfFire : 0;
+    const goldMagnet = Number.isFinite(upgrades?.goldMagnet) ? upgrades.goldMagnet : 0;
+    const wallBounce = Number.isFinite(upgrades?.wallBounce) ? upgrades.wallBounce : 0;
+    const idleIncome = Number.isFinite(upgrades?.idleIncome) ? upgrades.idleIncome : 0;
+    const shellArmor = Number.isFinite(upgrades?.shellArmor) ? upgrades.shellArmor : 0;
+    this._stmts.updateUpgrades.run(
+      bootSize,
+      multiStomp,
+      rateOfFire,
+      goldMagnet,
+      wallBounce,
+      idleIncome,
+      shellArmor,
+      Date.now(),
+      playerId
+    );
   }
 
   incrementKills(playerId) {

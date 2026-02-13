@@ -206,24 +206,26 @@ What was built:
 
 Files: new `server/db.js` (~105 lines), modified `server/game-server.js`, `server/index.js`, `client/game.js`
 
-**Why this matters:** Foundation for M6 (upgrades), M7 (leaderboards), and M8 (crypto).
+**Why this matters:** Foundation for long-term progression (M6 complete) and future M7/M8 systems.
 
 ---
 
-### M6: Permanent Upgrades -- NOT STARTED
+### M6: Permanent Upgrades -- DONE
 **Goal:** Give players something to spend $ROACH on that persists across deaths.
-**Effort:** 1-2 days
-**Blocked by:** M5 (needs persistence)
+**Outcome:** Implemented full persistent upgrade economy with server-authoritative enforcement, modal shop UX, and mobile-friendly purchasing flow.
 
-What to build:
-1. **Boot Size upgrade** — wider stomp hitbox (multiply BOOT_WIDTH/BOOT_HEIGHT by upgrade level)
-2. **Multi-stomp** — additional hit zones around main stomp point
-3. **Rate-of-fire** — lower STOMP_COOLDOWN per upgrade level
-4. **Upgrade shop UI** — panel showing available upgrades, costs, current levels
-5. **Server enforcement** — apply upgrade modifiers in `room.resolveStomp()`, validate on stomp cooldown
-6. **Visual indicators** — bigger boot for boot-size upgrade, multiple impact marks for multi-stomp
+What was built:
+1. **Persistent upgrade model** — added upgrade levels to SQLite player schema with backward-compatible migrations and save/load hooks.
+2. **Upgrade catalog + scaling** — centralized defs/cost curves/helpers in shared constants (`bootSize`, `multiStomp`, `rateOfFire`, `goldMagnet`, `wallBounce`, `idleIncome`, `shellArmor`) with high max levels for incremental progression.
+3. **Server-side purchase flow** — `buy_upgrade` message validation, max-level checks, affordability checks, and purchase success/failure responses.
+4. **Bank-first spending** — purchases now withdraw from banked balance before wallet balance, with exact source amounts returned to client logs/UI.
+5. **Server enforcement in gameplay** — stomp cooldown uses upgraded rate-of-fire, stomp zones honor boot-size + multi-stomp, wall bounce uses upgrade strength at room edges, and death penalty applies shell armor reduction.
+6. **Economy effects from upgrades** — gold attraction multiplier and idle income are applied on server tick for player roaches.
+7. **Shop modal UX** — dedicated popup store, grouped categories (`Fer yer Boot` / `Fer yer Roach`), prospector hover explanations, and stronger purchase feedback VFX/SFX.
+8. **Mobile store fixes** — category tabs now switch views on small screens so sections don't collapse/smash together.
+9. **Prospector onboarding polish** — tutorial now respects once-per-user onboarding flag and supports click-to-skip/click-to-close.
 
-Files: `server/game-server.js` (purchase handler), `server/room.js` (apply modifiers), `server/db.js` (persist upgrades), `client/game.js` (shop UI, visual changes)
+Files: `shared/constants.js`, `server/db.js`, `server/game-server.js`, `server/room.js`, `client/index.html`, `client/game.js`
 
 ---
 
@@ -247,7 +249,7 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 ### M8: Crypto Integration -- NOT STARTED
 **Goal:** Real $ROACH token economy on Base chain.
 **Effort:** Multiple days, separate workstream
-**Blocked by:** M5 (persistence), M6 (upgrades — need something to spend on)
+**Blocked by:** Product/legal rollout decisions and chain-integration scope (core game prerequisites are now in place)
 
 What to build:
 1. **Vibecoins/Clanker token deployment** — $ROACH on Base
@@ -263,26 +265,27 @@ Files: new `server/indexer.js`, new `server/admin.js`, `client/game.js` (wallet 
 
 ## Part 3: Current Status & Path to Shareable
 
-### What's Done (M1-M5)
+### What's Done (M1-M6)
 ```
 M1 (Deploy)      -- DONE  -- Server is deploy-ready, Railway-compatible
 M2 (Visual)      -- DONE  -- Sprites scaled, VFX, prospector NPC, heal hints
 M3 (Sound)       -- DONE  -- 7 SFX, AudioManager, mobile unlock, mute
 M4 (Mobile)      -- DONE  -- Joystick, tap-stomp, responsive layout, mobile HUD
 M5 (Persistence) -- DONE  -- SQLite, session tokens, reconnection, graceful shutdown
+M6 (Upgrades)    -- DONE  -- Persistent progression + bank-first shop + modal store UX
 ```
 
-**The game is fully playable and shareable right now.** Desktop + mobile, sound, tutorial NPC, visual polish. The only manual step is connecting the repo to Railway (or any Node host).
+**The game is fully playable and shareable right now.** Desktop + mobile, sound, tutorial NPC, persistent progression, and upgrade economy are all live. The only manual step is connecting the repo to Railway (or any Node host).
 
-### What's NOT Done (M6-M8)
+### What's NOT Done (M7-M8)
 ```
-M6 (Upgrades)     -- NOT STARTED  -- Nothing to spend money on yet
 M7 (Agents)       -- NOT STARTED  -- Protocol is ready, needs SDK/docs
-M8 (Crypto)       -- NOT STARTED  -- Needs M6 first
+M8 (Crypto)       -- NOT STARTED  -- Can proceed now that M6 is complete
 ```
 
 ### Bonus Work Completed (not in original milestones)
-- **Prospector tutorial rewrite** — replaced instructional 3-message onboarding + 6 event triggers with 4-scene reactive system: (1) game load intro, (2) first kill reaction, (3) growth warning, (4) motel hint. No explicit mechanic explanation — humor carries the learning. Single [Close] button, auto-dismiss on reactive scenes.
+- **Prospector tutorial rewrite + onboarding persistence** — replaced instructional onboarding with 4-scene reactive system and added once-per-user local onboarding flag plus skip/close controls.
+- **Store narrative UX** — prospector integrated into shop with contextual explanations and animated speaking.
 - **Security hardening** — rate limiting, input validation, XSS prevention, path traversal protection
 - **Balance math fix** — death penalty correctly applied before `die()`
 - **Motel banking improvement** — gradual progress degradation instead of hard reset
