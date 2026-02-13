@@ -1,9 +1,12 @@
 import {
   CONTAINER_WIDTH, CONTAINER_HEIGHT, ROACH_WIDTH, ROACH_HEIGHT,
   BOOT_WIDTH, BOOT_HEIGHT, MAX_ROACHES_PER_ROOM, INCOME_RATE,
-  TICKS_PER_SEC, KILL_REWARD, DEATH_PENALTY, STOMP_COOLDOWN,
-  BOTS_PER_WEALTH, MAX_BOTS_PER_ROOM, GRID_SIZE, MAX_HP, HEAL_COST,
+  TICKS_PER_SEC, KILL_REWARD,
+  BOTS_PER_WEALTH, MAX_BOTS_PER_ROOM, GRID_SIZE,
   STOMP_AOE_RADIUS,
+  getBootScale, getMultiStompOffsets, sanitizeUpgrades,
+  getGoldAttractionMultiplier, getIdleIncomePerSecond,
+  getShellArmorDeathPenalty, getWallBounceStrength,
 } from '../shared/constants.js';
 import { Roach } from './roach.js';
 import { HouseBot } from './house-bot.js';
@@ -96,7 +99,14 @@ export class Room {
     const incomePerTick = INCOME_RATE / TICKS_PER_SEC;
     for (const roach of this.roaches) {
       if (!roach.isDead) {
-        roach.balance += incomePerTick;
+        if (roach.isPlayer) {
+          const upgrades = sanitizeUpgrades(roach.upgrades);
+          const attractionMult = getGoldAttractionMultiplier(upgrades.goldMagnet);
+          const idleIncome = getIdleIncomePerSecond(upgrades.idleIncome) / TICKS_PER_SEC;
+          roach.balance += incomePerTick * attractionMult + idleIncome;
+        } else {
+          roach.balance += incomePerTick;
+        }
       }
     }
 
@@ -112,123 +122,119 @@ export class Room {
   }
 
   resolveStomp(stomp) {
-    const { playerId, x, y, seq } = stomp;
+    const { playerId, x, y } = stomp;
     const events = [];
-
-    // Boot hitbox (same as prototype)
-    const bootLeft = x - BOOT_WIDTH / 2;
-    const bootRight = x + BOOT_WIDTH / 2;
-    const bootTop = y - BOOT_HEIGHT * 0.8;
-    const bootBottom = y + BOOT_HEIGHT * 0.2;
-    let hitAny = false;
-    let directHitId = null; // track roach hit in direct phase to avoid AoE double-hit
-
-    for (const roach of this.roaches) {
-      if (roach.id === playerId || roach.isDead) continue;
-
-      const cx = roach.x + ROACH_WIDTH / 2;
-      const cy = roach.y + ROACH_HEIGHT / 2;
-      if (cx >= bootLeft && cx <= bootRight && cy >= bootTop && cy <= bootBottom) {
-        hitAny = true;
-        directHitId = roach.id;
-        const killed = roach.hit();
-
-        if (killed) {
-          const reward = roach.balance * KILL_REWARD;
-          // Find stomper and credit them
-          const stomper = this.roaches.find(r => r.id === playerId);
-          if (stomper) stomper.balance += reward;
-
-          events.push({
-            type: 'stomp_kill',
-            stomperId: playerId,
-            victimId: roach.id,
-            reward,
-            x, y,
-          });
-
-          if (!roach.isPlayer) {
-            roach.die();
-            // Schedule NPC removal and respawn
-            setTimeout(() => {
-              const idx = this.roaches.indexOf(roach);
-              if (idx > -1) this.roaches.splice(idx, 1);
-              setTimeout(() => {
-                if (this.roaches.filter(r => !r.isPlayer).length < MAX_ROACHES_PER_ROOM) {
-                  this.roaches.push(new Roach(false, Math.random() * 3));
-                }
-              }, 5000 + Math.random() * 5000);
-            }, 500);
-          } else {
-            // Player killed another player — apply death penalty before die()
-            const lost = roach.balance * DEATH_PENALTY;
-            roach.balance *= (1 - DEATH_PENALTY);
-            roach.die();
-            setTimeout(() => roach.respawn(), 500);
-            events.push({
-              type: 'player_death',
-              victimId: roach.id,
-              killerId: playerId,
-              lost,
-            });
-          }
-        } else {
-          events.push({
-            type: 'stomp_hit',
-            stomperId: playerId,
-            victimId: roach.id,
-            hp: roach.hp,
-            x, y,
-          });
-        }
-        break; // one hit per stomp
-      }
-    }
-
-    // AoE gradient: closer to impact = higher chance of splash damage
-    const bootCenterX = x;
-    const bootCenterY = y - BOOT_HEIGHT * 0.3;
+    const upgrades = sanitizeUpgrades(stomp.upgrades);
+    const bootScale = getBootScale(upgrades.bootSize);
+    const bootWidth = BOOT_WIDTH * bootScale;
+    const bootHeight = BOOT_HEIGHT * bootScale;
+    const zoneOffsets = getMultiStompOffsets(upgrades.multiStomp, bootWidth, bootHeight);
+    const zones = [
+      { x, y },
+      ...zoneOffsets.map((off) => ({
+        x: Math.max(0, Math.min(CONTAINER_WIDTH, x + off.dx)),
+        y: Math.max(0, Math.min(CONTAINER_HEIGHT, y + off.dy)),
+      })),
+    ];
+    const hitIds = new Set();
     const stomper = this.roaches.find(r => r.id === playerId);
+    const stomperUpgrades = sanitizeUpgrades(stomper?.upgrades);
+    const attractionRewardMult = getGoldAttractionMultiplier(stomperUpgrades.goldMagnet);
 
-    for (const roach of this.roaches) {
-      if (roach.id === playerId || roach.isDead || roach.id === directHitId) continue;
-      const dx = (roach.x + ROACH_WIDTH / 2) - bootCenterX;
-      const dy = (roach.y + ROACH_HEIGHT / 2) - bootCenterY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+    const applyStompDamage = (roach, impactX, impactY, emitHitEvent = true) => {
+      const killed = roach.hit();
+      if (killed) {
+        const reward = roach.balance * KILL_REWARD * attractionRewardMult;
+        if (stomper) stomper.balance += reward;
 
-      if (dist < STOMP_AOE_RADIUS) {
-        // Gradient: 70% hit chance at center, fading to 0% at edge
-        const hitChance = 0.7 * (1 - dist / STOMP_AOE_RADIUS);
-        if (Math.random() < hitChance) {
-          const killed = roach.hit();
-          if (killed) {
-            const reward = roach.balance * KILL_REWARD;
-            if (stomper) stomper.balance += reward;
-            events.push({ type: 'stomp_kill', stomperId: playerId, victimId: roach.id, reward, x: roach.x, y: roach.y });
+        events.push({
+          type: 'stomp_kill',
+          stomperId: playerId,
+          victimId: roach.id,
+          reward,
+          x: impactX,
+          y: impactY,
+        });
 
-            if (!roach.isPlayer) {
-              roach.die();
-              setTimeout(() => {
-                const idx = this.roaches.indexOf(roach);
-                if (idx > -1) this.roaches.splice(idx, 1);
-                setTimeout(() => {
-                  if (this.roaches.filter(r => !r.isPlayer).length < MAX_ROACHES_PER_ROOM) {
-                    this.roaches.push(new Roach(false, Math.random() * 3));
-                  }
-                }, 5000 + Math.random() * 5000);
-              }, 500);
-            } else {
-              const lost = roach.balance * DEATH_PENALTY;
-              roach.balance *= (1 - DEATH_PENALTY);
-              roach.die();
-              setTimeout(() => roach.respawn(), 500);
-              events.push({ type: 'player_death', victimId: roach.id, killerId: playerId, lost });
-            }
-          }
+        if (!roach.isPlayer) {
+          roach.die();
+          setTimeout(() => {
+            const idx = this.roaches.indexOf(roach);
+            if (idx > -1) this.roaches.splice(idx, 1);
+            setTimeout(() => {
+              if (this.roaches.filter(r => !r.isPlayer).length < MAX_ROACHES_PER_ROOM) {
+                this.roaches.push(new Roach(false, Math.random() * 3));
+              }
+            }, 5000 + Math.random() * 5000);
+          }, 500);
+        } else {
+          const victimUpgrades = sanitizeUpgrades(roach.upgrades);
+          const penaltyRate = getShellArmorDeathPenalty(victimUpgrades.shellArmor);
+          const lost = roach.balance * penaltyRate;
+          roach.balance *= (1 - penaltyRate);
+          roach.die();
+          setTimeout(() => roach.respawn(), 500);
+          events.push({
+            type: 'player_death',
+            victimId: roach.id,
+            killerId: playerId,
+            lost,
+          });
         }
-        roach.scatter(bootCenterX, bootCenterY);
-      } else if (dist < 100) {
-        roach.scatter(bootCenterX, bootCenterY);
+      } else if (emitHitEvent) {
+        events.push({
+          type: 'stomp_hit',
+          stomperId: playerId,
+          victimId: roach.id,
+          hp: roach.hp,
+          x: impactX,
+          y: impactY,
+        });
+      }
+    };
+
+    let hitAny = false;
+
+    for (const zone of zones) {
+      const bootLeft = zone.x - bootWidth / 2;
+      const bootRight = zone.x + bootWidth / 2;
+      const bootTop = zone.y - bootHeight * 0.8;
+      const bootBottom = zone.y + bootHeight * 0.2;
+
+      let directHitId = null;
+      for (const roach of this.roaches) {
+        if (roach.id === playerId || roach.isDead || hitIds.has(roach.id)) continue;
+        const cx = roach.x + ROACH_WIDTH / 2;
+        const cy = roach.y + ROACH_HEIGHT / 2;
+        if (cx >= bootLeft && cx <= bootRight && cy >= bootTop && cy <= bootBottom) {
+          hitAny = true;
+          directHitId = roach.id;
+          hitIds.add(roach.id);
+          applyStompDamage(roach, zone.x, zone.y, true);
+          break; // one direct hit per stomp zone
+        }
+      }
+
+      // AoE gradient: closer to impact = higher chance of splash damage.
+      const bootCenterX = zone.x;
+      const bootCenterY = zone.y - bootHeight * 0.3;
+      for (const roach of this.roaches) {
+        if (roach.id === playerId || roach.isDead || roach.id === directHitId || hitIds.has(roach.id)) continue;
+        const dx = (roach.x + ROACH_WIDTH / 2) - bootCenterX;
+        const dy = (roach.y + ROACH_HEIGHT / 2) - bootCenterY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < STOMP_AOE_RADIUS) {
+          const hitChance = 0.7 * (1 - dist / STOMP_AOE_RADIUS);
+          if (Math.random() < hitChance) {
+            hitAny = true;
+            hitIds.add(roach.id);
+            applyStompDamage(roach, roach.x, roach.y, false);
+          }
+          roach.scatter(bootCenterX, bootCenterY);
+        } else if (dist < 100) {
+          roach.scatter(bootCenterX, bootCenterY);
+        }
       }
     }
 
@@ -240,18 +246,33 @@ export class Room {
   }
 
   // Check if a player roach has crossed a room edge. Returns direction or null.
-  checkTransition(roach) {
+  checkTransition(roach, wallBounceLevel = 0) {
     const [cx, cy] = this.key.split(',').map(Number);
     if (roach.x < -5 && cx > 0) return { dir: 'left', nx: cx - 1, ny: cy };
     if (roach.x > CONTAINER_WIDTH + 5 && cx < GRID_SIZE - 1) return { dir: 'right', nx: cx + 1, ny: cy };
     if (roach.y < -5 && cy > 0) return { dir: 'up', nx: cx, ny: cy - 1 };
     if (roach.y > CONTAINER_HEIGHT + 5 && cy < GRID_SIZE - 1) return { dir: 'down', nx: cx, ny: cy + 1 };
 
+    const bounceStrength = getWallBounceStrength(wallBounceLevel);
+    const bounceImpulse = wallBounceLevel > 0 ? 0.2 : 0;
+
     // Clamp at grid edges
-    if (roach.x < -5 && cx === 0) { roach.x = -5; roach.vx *= -0.5; }
-    if (roach.x > CONTAINER_WIDTH + 5 && cx === GRID_SIZE - 1) { roach.x = CONTAINER_WIDTH + 5; roach.vx *= -0.5; }
-    if (roach.y < -5 && cy === 0) { roach.y = -5; roach.vy *= -0.5; }
-    if (roach.y > CONTAINER_HEIGHT + 5 && cy === GRID_SIZE - 1) { roach.y = CONTAINER_HEIGHT + 5; roach.vy *= -0.5; }
+    if (roach.x < -5 && cx === 0) {
+      roach.x = -5;
+      roach.vx = Math.abs(roach.vx) * bounceStrength + bounceImpulse;
+    }
+    if (roach.x > CONTAINER_WIDTH + 5 && cx === GRID_SIZE - 1) {
+      roach.x = CONTAINER_WIDTH + 5;
+      roach.vx = -Math.abs(roach.vx) * bounceStrength - bounceImpulse;
+    }
+    if (roach.y < -5 && cy === 0) {
+      roach.y = -5;
+      roach.vy = Math.abs(roach.vy) * bounceStrength + bounceImpulse;
+    }
+    if (roach.y > CONTAINER_HEIGHT + 5 && cy === GRID_SIZE - 1) {
+      roach.y = CONTAINER_HEIGHT + 5;
+      roach.vy = -Math.abs(roach.vy) * bounceStrength - bounceImpulse;
+    }
 
     return null;
   }

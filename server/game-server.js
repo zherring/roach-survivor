@@ -1,6 +1,8 @@
 import {
   TICK_RATE, GRID_SIZE, CONTAINER_WIDTH, CONTAINER_HEIGHT,
-  ROACH_WIDTH, ROACH_HEIGHT, STOMP_COOLDOWN, HEAL_COST, MAX_HP,
+  ROACH_WIDTH, ROACH_HEIGHT, HEAL_COST, MAX_HP,
+  UPGRADE_DEFS, getUpgradeCost, sanitizeUpgrades, createDefaultUpgrades,
+  getStompCooldownForLevel, getBootScale,
 } from '../shared/constants.js';
 import { Room } from './room.js';
 import { Roach } from './roach.js';
@@ -70,10 +72,16 @@ function sanitizeStompMessage(msg) {
   };
 }
 
+function sanitizeUpgradePurchaseMessage(msg) {
+  if (!msg || typeof msg !== 'object' || typeof msg.upgrade !== 'string') return null;
+  const key = msg.upgrade.trim();
+  return Object.prototype.hasOwnProperty.call(UPGRADE_DEFS, key) ? key : null;
+}
+
 export class GameServer {
   constructor() {
     this.rooms = new Map();
-    this.players = new Map(); // playerId -> { ws, roach, room, bankedBalance, lastStomp }
+    this.players = new Map(); // playerId -> { ws, roach, room, bankedBalance, upgrades, lastStomp }
     this.motel = new Motel();
     this.tickCount = 0;
     this.botAdjustTimer = 0;
@@ -103,6 +111,7 @@ export class GameServer {
   addPlayer(ws, reconnectToken = null) {
     let token = reconnectToken;
     let name, roomKey, bankedBalance, restored;
+    let upgrades = createDefaultUpgrades();
 
     // Try to restore from DB
     let session = null;
@@ -111,6 +120,15 @@ export class GameServer {
       if (existing) {
         name = existing.name;
         bankedBalance = existing.banked_balance;
+        upgrades = sanitizeUpgrades({
+          bootSize: existing.boot_size_level,
+          multiStomp: existing.multi_stomp_level,
+          rateOfFire: existing.rate_of_fire_level,
+          goldMagnet: existing.gold_magnet_level,
+          wallBounce: existing.wall_bounce_level,
+          idleIncome: existing.idle_income_level,
+          shellArmor: existing.shell_armor_level,
+        });
         session = db.getSession(token);
         roomKey = session ? session.room : '1,1';
         // Validate room exists
@@ -129,6 +147,7 @@ export class GameServer {
       roomKey = '1,1';
       bankedBalance = 0;
       restored = false;
+      upgrades = createDefaultUpgrades();
     }
 
     const room = this.rooms.get(roomKey);
@@ -146,6 +165,7 @@ export class GameServer {
       room: roomKey,
       token,
       bankedBalance: bankedBalance || 0,
+      upgrades,
       lastStomp: 0,
       lastHeal: 0,
       cursorX: INVALID_CURSOR,
@@ -153,6 +173,7 @@ export class GameServer {
       msgCount: 0,
       msgWindowStart: Date.now(),
     };
+    roach.upgrades = player.upgrades;
     this.players.set(roach.id, player);
 
     // Send welcome with full snapshot
@@ -166,6 +187,8 @@ export class GameServer {
       motel: this.motel.serialize(),
       gridSize: GRID_SIZE,
       restored,
+      upgrades: { ...upgrades },
+      stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
     });
 
     console.log(`Player joined: ${name} (${roach.id}) in room ${roomKey}`);
@@ -183,6 +206,7 @@ export class GameServer {
         player.roach.x, player.roach.y,
         player.roach.balance, player.roach.hp
       );
+      db.updateUpgrades(player.token, player.upgrades);
     }
 
     const room = this.rooms.get(player.room);
@@ -228,7 +252,8 @@ export class GameServer {
         if (!stomp) break;
 
         const now = Date.now();
-        if (now - player.lastStomp < STOMP_COOLDOWN) break;
+        const stompCooldown = getStompCooldownForLevel(player.upgrades.rateOfFire);
+        if (now - player.lastStomp < stompCooldown) break;
         player.lastStomp = now;
         const room = this.rooms.get(player.room);
         if (room) {
@@ -237,6 +262,7 @@ export class GameServer {
             x: stomp.x,
             y: stomp.y,
             seq: stomp.seq,
+            upgrades: { ...player.upgrades },
           });
         }
         break;
@@ -250,6 +276,66 @@ export class GameServer {
         roach.balance -= HEAL_COST;
         roach.hp = Math.min(roach.hp + 1, MAX_HP);
         roach.healCount++;
+        break;
+      }
+      case 'buy_upgrade': {
+        const upgradeKey = sanitizeUpgradePurchaseMessage(msg);
+        if (!upgradeKey) break;
+
+        const currentLevel = player.upgrades[upgradeKey] || 0;
+        const def = UPGRADE_DEFS[upgradeKey];
+        if (!def) break;
+
+        if (currentLevel >= def.maxLevel) {
+          this.send(player.ws, {
+            type: 'upgrade_purchase_failed',
+            upgrade: upgradeKey,
+            reason: 'max_level',
+          });
+          break;
+        }
+
+        const cost = getUpgradeCost(upgradeKey, currentLevel);
+        const availableFunds = player.bankedBalance + player.roach.balance;
+        if (availableFunds < cost) {
+          this.send(player.ws, {
+            type: 'upgrade_purchase_failed',
+            upgrade: upgradeKey,
+            reason: 'insufficient_funds',
+            cost,
+            availableFunds,
+          });
+          break;
+        }
+
+        let remaining = cost;
+        const usedFromBank = Math.min(player.bankedBalance, remaining);
+        player.bankedBalance -= usedFromBank;
+        remaining -= usedFromBank;
+        const usedFromCash = Math.min(player.roach.balance, remaining);
+        player.roach.balance -= usedFromCash;
+        remaining -= usedFromCash;
+
+        player.upgrades[upgradeKey] = currentLevel + 1;
+        player.roach.upgrades = player.upgrades;
+        if (player.token) {
+          db.updateUpgrades(player.token, player.upgrades);
+          if (usedFromBank > 0) {
+            db.updateBankedBalance(player.token, player.bankedBalance);
+          }
+        }
+        this.send(player.ws, {
+          type: 'upgrade_purchased',
+          upgrade: upgradeKey,
+          level: player.upgrades[upgradeKey],
+          cost,
+          usedFromBank,
+          usedFromCash,
+          upgrades: { ...player.upgrades },
+          stompCooldown: getStompCooldownForLevel(player.upgrades.rateOfFire),
+          balance: player.roach.balance,
+          banked: player.bankedBalance,
+        });
         break;
       }
     }
@@ -280,7 +366,9 @@ export class GameServer {
       // Check room transitions for players
       const playerRoaches = room.roaches.filter(r => r.isPlayer);
       for (const roach of playerRoaches) {
-        const transition = room.checkTransition(roach);
+        const player = this.players.get(roach.id);
+        const wallBounceLevel = player?.upgrades?.wallBounce || 0;
+        const transition = room.checkTransition(roach, wallBounceLevel);
         if (transition) {
           this.transitionPlayer(roach.id, key, `${transition.nx},${transition.ny}`, transition.dir);
         }
@@ -345,7 +433,12 @@ export class GameServer {
         if (other.room === player.room && otherId !== id
             && Number.isFinite(other.cursorX) && Number.isFinite(other.cursorY)
             && other.cursorX >= 0 && other.cursorY >= 0) {
-          cursors.push({ id: otherId, x: other.cursorX, y: other.cursorY });
+          cursors.push({
+            id: otherId,
+            x: other.cursorX,
+            y: other.cursorY,
+            bootScale: getBootScale(other.upgrades.bootSize),
+          });
         }
       }
 
@@ -364,6 +457,8 @@ export class GameServer {
           hp: player.roach.hp,
           lastInputSeq: player.roach.lastInputSeq,
           healCount: player.roach.healCount,
+          upgrades: { ...player.upgrades },
+          stompCooldown: getStompCooldownForLevel(player.upgrades.rateOfFire),
         },
       });
     }

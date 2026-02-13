@@ -76,6 +76,254 @@
     }
     #heal-btn:hover { background: #060; }
     #heal-btn:disabled { background: #222; border-color: #444; color: #666; cursor: not-allowed; }
+    .shop-open-btn {
+      width: 100%;
+      background: #1b2209;
+      border: 1px solid #8a7b2d;
+      color: #f0d878;
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: bold;
+      padding: 7px 8px;
+      cursor: pointer;
+    }
+    .shop-open-btn:hover { background: #2b3612; }
+
+    /* ==================== UPGRADE SHOP ==================== */
+    #upgrade-shop {
+      background: #0a0a0a;
+      border: 1px solid #333;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    #upgrade-shop .shop-title {
+      color: #0f0;
+      font-size: 11px;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    .upgrade-item {
+      background: #141414;
+      border: 1px solid #2b2b2b;
+      padding: 6px;
+    }
+    .upgrade-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 6px;
+      margin-bottom: 4px;
+      font-size: 10px;
+    }
+    .upgrade-name { color: #ddd; }
+    .upgrade-level {
+      color: #f0c040;
+      white-space: nowrap;
+    }
+    .upgrade-btn {
+      width: 100%;
+      border: 1px solid #0a0;
+      background: #042;
+      color: #9f9;
+      font-family: monospace;
+      font-size: 10px;
+      padding: 4px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .upgrade-btn:hover { background: #064; }
+    .upgrade-btn:disabled {
+      border-color: #444;
+      background: #1f1f1f;
+      color: #666;
+      cursor: not-allowed;
+    }
+    .upgrade-btn.maxed {
+      border-color: #7a5;
+      background: #2c3a1f;
+      color: #cf8;
+    }
+
+    #shop-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 5000;
+      padding: 14px;
+    }
+    #shop-modal.visible { display: flex; }
+    .shop-modal-layout {
+      width: min(920px, 100%);
+      max-height: 88vh;
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+    #shop-helper-column {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      min-height: 0;
+    }
+    #shop-prospector-text {
+      background: #f5f0d0;
+      border: 3px solid #555;
+      padding: 14px 18px;
+      margin-top: -10px;
+      width: 100%;
+      color: #222;
+      font-family: monospace;
+      font-size: 15px;
+      line-height: 1.5;
+      text-align: center;
+      overflow-y: auto;
+      min-height: 220px;
+    }
+    #shop-prospector {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    #shop-prospector-face {
+      width: 220px;
+      height: 220px;
+      image-rendering: pixelated;
+      flex-shrink: 0;
+    }
+    #shop-prospector.talking {
+      animation: prospector-bob 0.35s ease-in-out infinite;
+    }
+    #shop-prospector.talking #shop-prospector-face {
+      animation: prospector-wiggle-only 0.12s ease-in-out infinite;
+    }
+    #shop-panel {
+      background: #111;
+      border: 1px solid #444;
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+      padding: 14px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      position: relative;
+    }
+    #close-shop-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      border: 1px solid #555;
+      background: #222;
+      color: #ddd;
+      font-family: monospace;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      width: 26px;
+      height: 24px;
+      padding: 0;
+    }
+    #close-shop-btn:hover { background: #2f2f2f; }
+    .shop-category-row {
+      margin-top: 6px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      padding-right: 28px;
+    }
+    .shop-category-title {
+      color: #f0d878;
+      font-family: monospace;
+      font-size: 13px;
+      text-transform: none;
+      letter-spacing: 0.4px;
+      border-bottom: 1px solid #6c5a24;
+      padding: 4px 4px 6px;
+      text-align: center;
+    }
+    #shop-modal #upgrade-shop {
+      max-height: none;
+      flex: 1 1 auto;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      align-items: start;
+      background: transparent;
+      border: 0;
+      padding: 0 2px 0 0;
+    }
+    .upgrade-column {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #shop-modal .upgrade-item {
+      background: #0f1014;
+      border: 1px solid #2f3338;
+    }
+    #shop-modal .upgrade-item.purchase-pop {
+      animation: shop-item-pop 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+      border-color: #57b846;
+      box-shadow: 0 0 0 2px rgba(87, 184, 70, 0.25), 0 0 18px rgba(121, 226, 96, 0.35);
+    }
+    #shop-panel.purchase-flash {
+      animation: shop-panel-flash 0.28s ease-out;
+    }
+    .shop-purchase-float {
+      position: fixed;
+      z-index: 5200;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 0.8px;
+      color: #ecffd8;
+      text-shadow: 0 0 10px rgba(133, 244, 120, 0.9), 1px 1px 0 #103010;
+      animation: shop-purchase-float 0.78s ease-out forwards;
+      white-space: nowrap;
+    }
+    .shop-purchase-spark {
+      position: fixed;
+      z-index: 5200;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      pointer-events: none;
+      background: radial-gradient(circle at 35% 35%, #fff6ae 0%, #ffd85a 40%, #79e260 100%);
+      box-shadow: 0 0 10px rgba(255, 216, 90, 0.85);
+      animation: shop-spark-burst 0.46s ease-out forwards;
+      transform: translate(-50%, -50%);
+    }
+    @keyframes shop-item-pop {
+      0% { transform: scale(1); }
+      35% { transform: scale(1.04); }
+      100% { transform: scale(1); }
+    }
+    @keyframes shop-panel-flash {
+      0% { box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45); }
+      35% { box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45), 0 0 24px rgba(113, 226, 100, 0.35); }
+      100% { box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45); }
+    }
+    @keyframes shop-purchase-float {
+      0% { opacity: 0; transform: translate(-50%, -46%) scale(0.85); }
+      18% { opacity: 1; transform: translate(-50%, -58%) scale(1.05); }
+      100% { opacity: 0; transform: translate(-50%, -138%) scale(0.92); }
+    }
+    @keyframes shop-spark-burst {
+      0% { opacity: 1; transform: translate(-50%, -50%) scale(0.4); }
+      100% { opacity: 0; transform: translate(calc(-50% + var(--spark-x)), calc(-50% + var(--spark-y))) scale(0.05); }
+    }
 
     /* ==================== DESKTOP MINIMAP ==================== */
     #room-grid {
@@ -234,6 +482,49 @@
       .hud-value.banked { color: #f0c040; }
       .hud-value.hp { color: #0f0; }
       .hud-value.kills { color: #f66; }
+      #mobile-open-shop-btn {
+        background: #1b2209;
+        border: 1px solid #8a7b2d;
+        color: #f0d878;
+        font-family: monospace;
+        font-size: 10px;
+        font-weight: bold;
+        padding: 4px 8px;
+      }
+      .shop-modal-layout {
+        width: min(480px, 100%);
+        max-height: 88vh;
+        grid-template-columns: 1fr;
+      }
+      #shop-helper-column {
+        order: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+      }
+      #shop-prospector-text {
+        min-height: 84px;
+        font-size: 13px;
+        padding: 12px 14px;
+      }
+      #shop-prospector {
+        width: auto;
+        height: auto;
+      }
+      #shop-prospector-face {
+        width: 200px;
+        height: 200px;
+      }
+      #shop-panel {
+        min-height: 0;
+      }
+      .shop-category-row {
+        padding-right: 30px;
+      }
+      #shop-modal #upgrade-shop {
+        grid-template-columns: 1fr;
+      }
 
       /* Mobile heal bar — directly under game area */
       #mobile-heal-bar {
@@ -447,7 +738,8 @@
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       pointer-events: none;
-      transform: translateX(-50%) translateY(-80%);
+      --boot-scale: 1;
+      transform: translateX(-50%) translateY(-80%) scale(var(--boot-scale, 1));
       transform-origin: 50% 80%;
       opacity: 0;
       z-index: 100;
@@ -461,9 +753,9 @@
       animation: stomp 0.15s ease-out;
     }
     @keyframes stomp {
-      0% { opacity: 1; transform: translateX(-50%) translateY(-120%) scale(1.2); }
-      50% { opacity: 1; transform: translateX(-50%) translateY(-60%) scale(1); }
-      100% { opacity: 0.6; transform: translateX(-50%) translateY(-80%) scale(1); }
+      0% { opacity: 1; transform: translateX(-50%) translateY(-120%) scale(calc(var(--boot-scale, 1) * 1.2)); }
+      50% { opacity: 1; transform: translateX(-50%) translateY(-60%) scale(var(--boot-scale, 1)); }
+      100% { opacity: 0.6; transform: translateX(-50%) translateY(-80%) scale(var(--boot-scale, 1)); }
     }
 
     /* Other players' boot cursors */
@@ -977,6 +1269,7 @@
         <div class="stat">Kills: <span id="kills">0</span></div>
         <div class="stat">Room: <span id="current-room">1,1</span></div>
       </div>
+      <button id="open-shop-btn" class="shop-open-btn">Open Store</button>
 
       <div id="room-grid"></div>
 
@@ -1008,6 +1301,9 @@
         <div class="hud-group">
           <span class="hud-label">Kills</span>
           <span class="hud-value kills" id="m-kills">0</span>
+        </div>
+        <div class="hud-group">
+          <button id="mobile-open-shop-btn">Store</button>
         </div>
       </div>
 
@@ -1045,6 +1341,79 @@
   <div id="joystick-zone">
     <div id="joystick-base">
       <div id="joystick-knob"></div>
+    </div>
+  </div>
+
+  <div id="shop-modal">
+    <div class="shop-modal-layout">
+      <div id="shop-helper-column">
+        <div id="shop-prospector-text">Hover an upgrade and I'll tell ya what it does.</div>
+        <div id="shop-prospector">
+          <img id="shop-prospector-face" src="assets/prospector-closed.png" alt="Prospector shop helper">
+        </div>
+      </div>
+      <div id="shop-panel">
+        <button id="close-shop-btn" aria-label="Close store">x</button>
+        <div class="shop-category-row">
+          <div class="shop-category-title">Fer yer Boot</div>
+          <div class="shop-category-title">Fer yer Roach</div>
+        </div>
+        <div id="upgrade-shop">
+          <div class="upgrade-column">
+            <div class="upgrade-item" data-upgrade="bootSize">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Boot Size</span>
+                <span class="upgrade-level" id="level-bootSize">Lv 0/80</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-bootSize">Buy</button>
+            </div>
+            <div class="upgrade-item" data-upgrade="multiStomp">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Multi-stomp</span>
+                <span class="upgrade-level" id="level-multiStomp">Lv 0/40</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-multiStomp">Buy</button>
+            </div>
+            <div class="upgrade-item" data-upgrade="rateOfFire">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Rate-of-fire</span>
+                <span class="upgrade-level" id="level-rateOfFire">Lv 0/120</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-rateOfFire">Buy</button>
+            </div>
+          </div>
+          <div class="upgrade-column">
+            <div class="upgrade-item" data-upgrade="goldMagnet">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Gold Attraction</span>
+                <span class="upgrade-level" id="level-goldMagnet">Lv 0/160</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-goldMagnet">Buy</button>
+            </div>
+            <div class="upgrade-item" data-upgrade="wallBounce">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Wall Bounce</span>
+                <span class="upgrade-level" id="level-wallBounce">Lv 0/60</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-wallBounce">Buy</button>
+            </div>
+            <div class="upgrade-item" data-upgrade="idleIncome">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Idle Income</span>
+                <span class="upgrade-level" id="level-idleIncome">Lv 0/160</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-idleIncome">Buy</button>
+            </div>
+            <div class="upgrade-item" data-upgrade="shellArmor">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Shell Armor</span>
+                <span class="upgrade-level" id="level-shellArmor">Lv 0/90</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-shellArmor">Buy</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

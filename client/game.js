@@ -4,6 +4,8 @@ import {
   PLAYER_BASE_SPEED, WEALTH_SPEED_PENALTY_MAX, WEALTH_SPEED_PENALTY_RATE,
   MIN_SPEED, TICK_RATE, MOTEL_SIZE, MOTEL_SAVE_TIME, GRID_SIZE,
   HEAL_COST, MAX_HP,
+  UPGRADE_DEFS, UPGRADE_ORDER, createDefaultUpgrades, sanitizeUpgrades,
+  getUpgradeCost, getBootScale, getMultiStompOffsets, getStompCooldownForLevel,
 } from '/shared/constants.js';
 
 // ==================== AUDIO ====================
@@ -109,6 +111,9 @@ let bankedBalance = 0;
 let kills = 0;
 let aliveTime = 0;
 let lastAliveReset = Date.now();
+let upgrades = createDefaultUpgrades();
+let stompCooldownMs = getStompCooldownForLevel(0);
+let lastLocalStompAt = 0;
 
 // Entity maps: id -> { data, el, prevX, prevY, prevTime }
 const roachEls = new Map();
@@ -176,6 +181,202 @@ const balanceEl = document.getElementById('balance');
 const bankedEl = document.getElementById('banked');
 const mobileBalanceEl = document.getElementById('m-balance');
 const mobileBankedEl = document.getElementById('m-banked');
+const shopModal = document.getElementById('shop-modal');
+const shopPanelEl = document.getElementById('shop-panel');
+const openShopBtn = document.getElementById('open-shop-btn');
+const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
+const closeShopBtn = document.getElementById('close-shop-btn');
+const shopProspectorFaceEl = document.getElementById('shop-prospector-face');
+const shopProspectorTextEl = document.getElementById('shop-prospector-text');
+const SHOP_PROSPECTOR_DEFAULT_LINE = "Hover an upgrade and I'll tell ya what it does.";
+const SHOP_PROSPECTOR_LINES = {
+  bootSize: "This here boot gets wider every level. Bigger sole means more bugs under it.",
+  multiStomp: "Extra stomps around the main hit. More little quakes, more squished roaches.",
+  rateOfFire: "Speeds up your stompin'. Level it high and that boot comes down like thunder.",
+  goldMagnet: "Pure magnet greed. Your roach pulls in way more gold from living and killing.",
+  wallBounce: "Turns walls into springboards. Smack the edge and bounce back with force.",
+  idleIncome: "Passive drip of money every second. Good for lazy roaches who still want rich pockets.",
+  shellArmor: "Thickens your shell. Die less broke by keeping more of what you earned.",
+};
+const SHOP_PROSPECTOR_TYPE_MS = 500;
+let shopProspectorTalkTimer = null;
+let shopProspectorMouthTimer = null;
+let shopProspectorTypeTimer = null;
+let shopProspectorAnimRunId = 0;
+
+function applyUpgradeState(rawUpgrades) {
+  upgrades = sanitizeUpgrades(rawUpgrades);
+  stompCooldownMs = getStompCooldownForLevel(upgrades.rateOfFire);
+  const bootScale = getBootScale(upgrades.bootSize);
+  boot.style.setProperty('--boot-scale', bootScale.toFixed(3));
+}
+
+function setStompCooldownMs(rawCooldown) {
+  const parsed = Number(rawCooldown);
+  if (!Number.isFinite(parsed)) return;
+  stompCooldownMs = Math.max(30, parsed);
+}
+
+function renderUpgradeShop() {
+  for (const key of UPGRADE_ORDER) {
+    const def = UPGRADE_DEFS[key];
+    if (!def) continue;
+    const level = upgrades[key] || 0;
+    const maxed = level >= def.maxLevel;
+    const cost = maxed ? 0 : getUpgradeCost(key, level);
+    const canAfford = maxed || (balance + bankedBalance) >= cost;
+
+    const levelEl = document.getElementById(`level-${key}`);
+    if (levelEl) {
+      levelEl.textContent = `Lv ${level}/${def.maxLevel}`;
+    }
+
+    const desktopBtn = document.getElementById(`upgrade-btn-${key}`);
+    if (desktopBtn) {
+      desktopBtn.disabled = maxed || !canAfford;
+      desktopBtn.classList.toggle('maxed', maxed);
+      desktopBtn.textContent = maxed ? 'MAXED' : `Buy $${cost.toFixed(2)}`;
+    }
+
+  }
+}
+
+function tryPurchaseUpgrade(upgradeKey) {
+  const def = UPGRADE_DEFS[upgradeKey];
+  if (!def) return;
+  const level = upgrades[upgradeKey] || 0;
+  if (level >= def.maxLevel) return;
+  const cost = getUpgradeCost(upgradeKey, level);
+  if ((balance + bankedBalance) < cost) return;
+  send({ type: 'buy_upgrade', upgrade: upgradeKey });
+}
+
+function setShopModalOpen(isOpen) {
+  if (!shopModal) return;
+  shopModal.classList.toggle('visible', !!isOpen);
+  if (isOpen) {
+    setShopProspectorLine(null);
+    return;
+  }
+  shopProspectorAnimRunId++;
+  if (shopProspectorTypeTimer) {
+    clearTimeout(shopProspectorTypeTimer);
+    shopProspectorTypeTimer = null;
+  }
+  if (shopProspectorTalkTimer) {
+    clearTimeout(shopProspectorTalkTimer);
+    shopProspectorTalkTimer = null;
+  }
+  stopShopProspectorTalking();
+}
+
+function stopShopProspectorTalking() {
+  if (shopProspectorMouthTimer) {
+    clearInterval(shopProspectorMouthTimer);
+    shopProspectorMouthTimer = null;
+  }
+  if (shopProspectorFaceEl) {
+    shopProspectorFaceEl.src = 'assets/prospector-closed.png';
+  }
+  const wrap = shopProspectorFaceEl?.parentElement;
+  wrap?.classList.remove('talking');
+}
+
+function startShopProspectorTalking() {
+  const wrap = shopProspectorFaceEl?.parentElement;
+  wrap?.classList.add('talking');
+  if (!shopProspectorFaceEl) return;
+  shopProspectorFaceEl.src = 'assets/prospector-speaking.png';
+  if (shopProspectorMouthTimer) clearInterval(shopProspectorMouthTimer);
+  let mouthOpen = true;
+  shopProspectorMouthTimer = setInterval(() => {
+    mouthOpen = !mouthOpen;
+    shopProspectorFaceEl.src = mouthOpen ? 'assets/prospector-speaking.png' : 'assets/prospector-closed.png';
+  }, 95);
+}
+
+function setShopProspectorLine(upgradeKey = null) {
+  if (!shopProspectorFaceEl || !shopProspectorTextEl) return;
+  const line = SHOP_PROSPECTOR_LINES[upgradeKey] || SHOP_PROSPECTOR_DEFAULT_LINE;
+  const runId = ++shopProspectorAnimRunId;
+
+  if (shopProspectorTypeTimer) {
+    clearTimeout(shopProspectorTypeTimer);
+    shopProspectorTypeTimer = null;
+  }
+  if (shopProspectorTalkTimer) clearTimeout(shopProspectorTalkTimer);
+  startShopProspectorTalking();
+
+  shopProspectorTextEl.textContent = '';
+  const startAt = performance.now();
+  const step = () => {
+    if (runId !== shopProspectorAnimRunId) return;
+    const elapsed = performance.now() - startAt;
+    const progress = Math.min(1, elapsed / SHOP_PROSPECTOR_TYPE_MS);
+    const nextLen = Math.max(1, Math.floor(line.length * progress));
+    shopProspectorTextEl.textContent = line.slice(0, nextLen);
+    if (progress >= 1) {
+      shopProspectorTextEl.textContent = line;
+      shopProspectorTalkTimer = setTimeout(() => {
+        if (runId !== shopProspectorAnimRunId) return;
+        stopShopProspectorTalking();
+      }, 120);
+      return;
+    }
+    shopProspectorTypeTimer = setTimeout(step, 16);
+  };
+  step();
+}
+
+function showUpgradePurchaseEffect(upgradeKey, cost = 0, level = 0) {
+  const safeCost = Number.isFinite(cost) ? Math.max(0, cost) : 0;
+  const buyChimes = Math.max(2, Math.min(7, Math.ceil(safeCost * 1.5)));
+  AudioManager.play('synth', 0.45);
+  AudioManager.playCoins(buyChimes, 0.45);
+
+  if (shopPanelEl) {
+    shopPanelEl.classList.remove('purchase-flash');
+    void shopPanelEl.offsetWidth;
+    shopPanelEl.classList.add('purchase-flash');
+    setTimeout(() => shopPanelEl.classList.remove('purchase-flash'), 300);
+  }
+
+  if (!upgradeKey) return;
+  const row = document.querySelector(`#upgrade-shop .upgrade-item[data-upgrade="${upgradeKey}"]`);
+  if (!row) return;
+
+  row.classList.remove('purchase-pop');
+  void row.offsetWidth;
+  row.classList.add('purchase-pop');
+  setTimeout(() => row.classList.remove('purchase-pop'), 420);
+
+  const rect = row.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+
+  const burstCount = 10;
+  for (let i = 0; i < burstCount; i++) {
+    const spark = document.createElement('div');
+    spark.className = 'shop-purchase-spark';
+    spark.style.left = (cx + (Math.random() - 0.5) * 24) + 'px';
+    spark.style.top = (cy + (Math.random() - 0.5) * 24) + 'px';
+    const angle = (i / burstCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+    const distance = 26 + Math.random() * 40;
+    const rise = 10 + Math.random() * 24;
+    spark.style.setProperty('--spark-x', (Math.cos(angle) * distance).toFixed(1) + 'px');
+    spark.style.setProperty('--spark-y', (Math.sin(angle) * distance - rise).toFixed(1) + 'px');
+    document.body.appendChild(spark);
+    setTimeout(() => spark.remove(), 550);
+  }
+
+  const label = document.createElement('div');
+  label.className = 'shop-purchase-float';
+  label.textContent = `UPGRADED TO LV ${Math.max(0, Number(level) || 0)}!`;
+  label.style.left = cx + 'px';
+  label.style.top = (rect.top + 6) + 'px';
+  document.body.appendChild(label);
+  setTimeout(() => label.remove(), 850);
+}
 
 function getVisibleStatEl(desktopEl, mobileEl) {
   if (window.innerWidth <= 640 && mobileEl && mobileEl.getClientRects().length > 0) {
@@ -188,6 +389,25 @@ function getVisibleStatEl(desktopEl, mobileEl) {
 let ws = null;
 let connected = false;
 let sessionToken = localStorage.getItem('roach_session_token');
+let onboardingToken = null;
+let onboardingSeen = false;
+let onboardingIntroQueued = false;
+
+function getOnboardingStorageKey(token) {
+  return token ? `roach_onboarded_${token}` : null;
+}
+
+function loadOnboardingState(token) {
+  onboardingToken = token || null;
+  const key = getOnboardingStorageKey(onboardingToken);
+  onboardingSeen = key ? localStorage.getItem(key) === '1' : false;
+}
+
+function markOnboardingSeen() {
+  onboardingSeen = true;
+  const key = getOnboardingStorageKey(onboardingToken);
+  if (key) localStorage.setItem(key, '1');
+}
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -236,6 +456,18 @@ function handleMessage(msg) {
         sessionToken = msg.token;
         localStorage.setItem('roach_session_token', msg.token);
       }
+      loadOnboardingState(sessionToken || msg.token || null);
+      if (onboardingSeen) {
+        prospector.done = true;
+        prospector.seenScenes = new Set([1, 2, 3, 4]);
+        prospector.hide();
+      } else {
+        prospector.done = false;
+        if (!onboardingIntroQueued) {
+          onboardingIntroQueued = true;
+          setTimeout(() => prospector.scene1_gameLoad(), 2000);
+        }
+      }
       buildMinimap();
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
@@ -246,6 +478,11 @@ function handleMessage(msg) {
         log(`<span style="color:#0ff">You are ${escapeHtml(myName)}!</span>`);
         log('Your roach is <span style="color:#0ff">CYAN</span>. <span style="color:#a00">RED BOOTS</span> hunt wealthy roaches.');
       }
+      applyUpgradeState(msg.upgrades);
+      if (Number.isFinite(msg.stompCooldown)) {
+        setStompCooldownMs(msg.stompCooldown);
+      }
+      renderUpgradeShop();
       break;
 
     case 'tick':
@@ -261,6 +498,42 @@ function handleMessage(msg) {
       log(`Crawled to room ${msg.room}`);
       prospector.onRoomChange(msg.room);
       break;
+    case 'upgrade_purchased': {
+      const def = UPGRADE_DEFS[msg.upgrade];
+      if (def) {
+        const bankSpent = Number.isFinite(msg.usedFromBank) ? msg.usedFromBank : 0;
+        const cashSpent = Number.isFinite(msg.usedFromCash) ? msg.usedFromCash : 0;
+        log(
+          `<span style="color:#8f8">${escapeHtml(def.label)} upgraded to Lv ${msg.level}</span> ` +
+          `<span class="money">-$${Number(msg.cost || 0).toFixed(2)}</span> ` +
+          `<span style="color:#f0c040">(bank $${bankSpent.toFixed(2)} + wallet $${cashSpent.toFixed(2)})</span>`
+        );
+      }
+      if (Number.isFinite(msg.balance)) {
+        balance = msg.balance;
+      }
+      if (Number.isFinite(msg.banked)) {
+        bankedBalance = msg.banked;
+      }
+      applyUpgradeState(msg.upgrades);
+      if (Number.isFinite(msg.stompCooldown)) {
+        setStompCooldownMs(msg.stompCooldown);
+      }
+      renderUpgradeShop();
+      showUpgradePurchaseEffect(msg.upgrade, Number(msg.cost), msg.level);
+      break;
+    }
+    case 'upgrade_purchase_failed': {
+      const def = UPGRADE_DEFS[msg.upgrade];
+      if (!def) break;
+      if (msg.reason === 'max_level') {
+        log(`<span style="color:#f0c040">${escapeHtml(def.label)} is already maxed.</span>`);
+      } else if (msg.reason === 'insufficient_funds' && Number.isFinite(msg.cost)) {
+        const have = Number.isFinite(msg.availableFunds) ? msg.availableFunds : (balance + bankedBalance);
+        log(`<span style="color:#f66">Need $${msg.cost.toFixed(2)} for ${escapeHtml(def.label)} (have $${have.toFixed(2)}).</span>`);
+      }
+      break;
+    }
   }
 }
 
@@ -272,6 +545,12 @@ function handleTick(msg) {
     balance = msg.you.balance;
     bankedBalance = msg.you.banked;
     lastServerSeq = msg.you.lastInputSeq;
+    if (msg.you.upgrades) {
+      applyUpgradeState(msg.you.upgrades);
+    }
+    if (Number.isFinite(msg.you.stompCooldown)) {
+      setStompCooldownMs(msg.you.stompCooldown);
+    }
     if (Number.isFinite(msg.you.healCount)) {
       if (msg.you.healCount > lastHealCount) {
         showHealEffect();
@@ -348,6 +627,11 @@ function handleTick(msg) {
       }
       bootEl.style.left = c.x + 'px';
       bootEl.style.top = c.y + 'px';
+      if (Number.isFinite(c.bootScale)) {
+        bootEl.style.setProperty('--boot-scale', c.bootScale.toFixed(3));
+      } else {
+        bootEl.style.setProperty('--boot-scale', '1');
+      }
     }
   }
   for (const [cid, el] of otherBootEls) {
@@ -544,6 +828,29 @@ function predictFrame() {
 
   predictedX += predictedVx;
   predictedY += predictedVy;
+
+  // Wall bounce powerup: stronger rebounds at world boundaries.
+  const [roomX, roomY] = currentRoom.split(',').map(Number);
+  const bounceLevel = upgrades.wallBounce || 0;
+  if (bounceLevel > 0) {
+    const bounceStrength = 0.55 + Math.min(2.2, bounceLevel * 0.04);
+    if (roomX === 0 && predictedX < -5) {
+      predictedX = -5;
+      predictedVx = Math.abs(predictedVx) * bounceStrength + 0.2;
+    }
+    if (roomX === gridSize - 1 && predictedX > CONTAINER_WIDTH + 5) {
+      predictedX = CONTAINER_WIDTH + 5;
+      predictedVx = -Math.abs(predictedVx) * bounceStrength - 0.2;
+    }
+    if (roomY === 0 && predictedY < -5) {
+      predictedY = -5;
+      predictedVy = Math.abs(predictedVy) * bounceStrength + 0.2;
+    }
+    if (roomY === gridSize - 1 && predictedY > CONTAINER_HEIGHT + 5) {
+      predictedY = CONTAINER_HEIGHT + 5;
+      predictedVy = -Math.abs(predictedVy) * bounceStrength - 0.2;
+    }
+  }
 
   // Clamp to room edges (allow slight overflow for transitions)
   predictedX = Math.max(-10, Math.min(CONTAINER_WIDTH + 10, predictedX));
@@ -774,6 +1081,8 @@ function updateUI() {
     if (entry.data.isPlayer) playerCount++;
   }
   document.getElementById('player-count').textContent = `Players in room: ${playerCount}`;
+
+  renderUpgradeShop();
 }
 
 function escapeHtml(str) {
@@ -807,9 +1116,12 @@ function showSplat(x, y) {
   setTimeout(() => splat.remove(), 1200);
 }
 
-function showShockwave(x, y) {
+function showShockwave(x, y, scale = 1) {
   const ring = document.createElement('div');
   ring.className = 'shockwave';
+  const scaledSize = Math.max(50, 120 * scale);
+  ring.style.width = scaledSize + 'px';
+  ring.style.height = scaledSize + 'px';
   ring.style.left = x + 'px';
   ring.style.top = y + 'px';
   container.appendChild(ring);
@@ -1172,9 +1484,58 @@ function buildMinimap() {
   }
 }
 
+function setBootTransform(angleDeg = 0) {
+  const bootScale = getBootScale(upgrades.bootSize);
+  boot.style.setProperty('--boot-scale', bootScale.toFixed(3));
+  boot.style.transform = `translateX(-50%) translateY(-80%) rotate(${angleDeg}deg) scale(${bootScale})`;
+}
+
+function showStompImpacts(x, y) {
+  const bootScale = getBootScale(upgrades.bootSize);
+  const bootWidth = BOOT_WIDTH * bootScale;
+  const bootHeight = BOOT_HEIGHT * bootScale;
+  const zones = [
+    { dx: 0, dy: 0 },
+    ...getMultiStompOffsets(upgrades.multiStomp, bootWidth, bootHeight),
+  ];
+  const visualZones = zones.slice(0, 16);
+  for (const zone of visualZones) {
+    const impactX = Math.max(0, Math.min(CONTAINER_WIDTH, x + zone.dx));
+    const impactY = Math.max(0, Math.min(CONTAINER_HEIGHT, y + zone.dy));
+    showShockwave(impactX, impactY - bootHeight * 0.3, Math.max(0.7, bootScale * 0.85));
+  }
+}
+
+function tryLocalStomp(x, y) {
+  const now = Date.now();
+  if (now - lastLocalStompAt < stompCooldownMs) return;
+  lastLocalStompAt = now;
+
+  boot.classList.remove('stomping');
+  void boot.offsetWidth;
+  boot.classList.add('stomping');
+  showStompImpacts(x, y);
+  shakeScreen();
+  AudioManager.play('click', 0.3);
+
+  send({ type: 'stomp', x, y, seq: inputSeq });
+}
+
 // ==================== INPUT ====================
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    setShopModalOpen(false);
+    return;
+  }
+
   const k = e.key.toLowerCase();
+  if (shopModal && shopModal.classList.contains('visible')) {
+    if (k in keys || e.key === ' ') {
+      e.preventDefault();
+    }
+    return;
+  }
+
   if (k in keys) keys[k] = true;
   if (e.key === ' ') {
     e.preventDefault();
@@ -1205,23 +1566,14 @@ container.addEventListener('mousemove', (e) => {
 
   boot.style.left = mouseX + 'px';
   boot.style.top = mouseY + 'px';
-  boot.style.transform = `translateX(-50%) translateY(-80%) rotate(${bootTilt}deg)`;
+  setBootTransform(bootTilt);
 });
 
 container.addEventListener('click', (e) => {
   const rect = container.getBoundingClientRect();
   const x = (e.clientX - rect.left) / scaleFactor;
   const y = (e.clientY - rect.top) / scaleFactor;
-
-  // Optimistic boot animation + impact effects
-  boot.classList.remove('stomping');
-  void boot.offsetWidth;
-  boot.classList.add('stomping');
-  showShockwave(x, y - BOOT_HEIGHT * 0.3);
-  shakeScreen();
-  AudioManager.play('click', 0.3);
-
-  send({ type: 'stomp', x, y, seq: inputSeq });
+  tryLocalStomp(x, y);
 });
 
 document.getElementById('heal-btn').addEventListener('click', () => {
@@ -1230,6 +1582,21 @@ document.getElementById('heal-btn').addEventListener('click', () => {
 document.getElementById('mobile-heal-btn')?.addEventListener('click', () => {
   send({ type: 'heal' });
 });
+openShopBtn?.addEventListener('click', () => setShopModalOpen(true));
+mobileOpenShopBtn?.addEventListener('click', () => setShopModalOpen(true));
+closeShopBtn?.addEventListener('click', () => setShopModalOpen(false));
+shopModal?.addEventListener('click', (e) => {
+  if (e.target === shopModal) setShopModalOpen(false);
+});
+document.querySelectorAll('#upgrade-shop .upgrade-item').forEach((item) => {
+  const key = item.dataset.upgrade || null;
+  item.addEventListener('mouseenter', () => setShopProspectorLine(key));
+});
+for (const key of UPGRADE_ORDER) {
+  const btn = document.getElementById(`upgrade-btn-${key}`);
+  btn?.addEventListener('click', () => tryPurchaseUpgrade(key));
+  btn?.addEventListener('focus', () => setShopProspectorLine(key));
+}
 
 // ==================== MOBILE TOUCH CONTROLS ====================
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -1303,14 +1670,8 @@ container.addEventListener('touchstart', (e) => {
   boot.style.left = x + 'px';
   boot.style.top = y + 'px';
   boot.classList.add('hovering');
-
-  boot.classList.remove('stomping');
-  void boot.offsetWidth;
-  boot.classList.add('stomping');
-  showShockwave(x, y - BOOT_HEIGHT * 0.3);
-  shakeScreen();
-  AudioManager.play('click', 0.3);
-  send({ type: 'stomp', x, y, seq: inputSeq });
+  setBootTransform(0);
+  tryLocalStomp(x, y);
 });
 container.addEventListener('touchmove', (e) => {
   e.preventDefault();
@@ -1320,6 +1681,7 @@ container.addEventListener('touchmove', (e) => {
   mouseY = (touch.clientY - rect.top) / scaleFactor;
   boot.style.left = mouseX + 'px';
   boot.style.top = mouseY + 'px';
+  setBootTransform(0);
 });
 container.addEventListener('touchend', () => {
   boot.classList.remove('hovering');
@@ -1345,6 +1707,9 @@ const prospector = {
   autoHideTimer: null,
   scene: 0,         // which scene we're on (0 = not started)
   seenScenes: new Set(),
+  sceneRunId: 0,
+  sceneFinished: false,
+  awaitingCloseClick: false,
 
   // -- Core display methods --
 
@@ -1353,21 +1718,22 @@ const prospector = {
     this.overlay.classList.add('visible');
   },
 
-  _typeLine(text, onDone) {
+  _typeLine(text, onDone, runId) {
+    if (runId !== this.sceneRunId || !this.visible) return;
     this.currentText = text;
     this.charIndex = 0;
     this.textEl.textContent = '';
     this.typing = true;
     this.startTalking();
-    this._typeNext(onDone);
+    this._typeNext(onDone, runId);
   },
 
-  _typeNext(onDone) {
-    if (!this.visible) return;
+  _typeNext(onDone, runId) {
+    if (!this.visible || runId !== this.sceneRunId) return;
     if (this.charIndex < this.currentText.length) {
       this.charIndex++;
       this.textEl.textContent = this.currentText.slice(0, this.charIndex);
-      setTimeout(() => this._typeNext(onDone), 25 + Math.random() * 20);
+      setTimeout(() => this._typeNext(onDone, runId), 25 + Math.random() * 20);
     } else {
       this.typing = false;
       this.stopTalking();
@@ -1400,6 +1766,10 @@ const prospector = {
     this.lines = [];
     this.lineIndex = 0;
     if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
+    this.sceneRunId++;
+    this.sceneFinished = false;
+    this.awaitingCloseClick = false;
+    this.closeBtn.textContent = '[Close]';
   },
 
   close() {
@@ -1411,18 +1781,27 @@ const prospector = {
   playScene(lines, opts = {}) {
     if (this.done) return;
     const { showClose = false, autoHide = false, autoHideDelay = 2000 } = opts;
+    this.sceneRunId++;
+    const runId = this.sceneRunId;
     this.lines = lines;
     this.lineIndex = 0;
+    this.sceneFinished = false;
+    this.awaitingCloseClick = false;
+    this.closeBtn.textContent = '[Close]';
     this.closeBtn.style.display = showClose ? '' : 'none';
     this.show();
-    this._playNextLine(autoHide, autoHideDelay);
+    this._playNextLine(autoHide, autoHideDelay, runId);
   },
 
-  _playNextLine(autoHide, autoHideDelay) {
+  _playNextLine(autoHide, autoHideDelay, runId) {
+    if (!this.visible || runId !== this.sceneRunId) return;
     if (this.lineIndex >= this.lines.length) {
       // All lines done
+      this.sceneFinished = true;
       if (autoHide) {
-        this.autoHideTimer = setTimeout(() => this.hide(), autoHideDelay);
+        this.autoHideTimer = setTimeout(() => {
+          if (runId === this.sceneRunId) this.hide();
+        }, autoHideDelay);
       }
       return;
     }
@@ -1432,18 +1811,56 @@ const prospector = {
 
     if (typeof entry === 'number') {
       // It's a delay (beat) in ms
-      setTimeout(() => this._playNextLine(autoHide, autoHideDelay), entry);
+      setTimeout(() => this._playNextLine(autoHide, autoHideDelay, runId), entry);
     } else {
       // It's a text line
       this._typeLine(entry, () => {
+        if (!this.visible || runId !== this.sceneRunId) return;
         // Small pause after each line before next
         if (this.lineIndex < this.lines.length) {
-          setTimeout(() => this._playNextLine(autoHide, autoHideDelay), 600);
+          setTimeout(() => this._playNextLine(autoHide, autoHideDelay, runId), 600);
         } else {
-          this._playNextLine(autoHide, autoHideDelay);
+          this._playNextLine(autoHide, autoHideDelay, runId);
         }
-      });
+      }, runId);
     }
+  },
+
+  _getFinalLine() {
+    for (let i = this.lines.length - 1; i >= 0; i--) {
+      if (typeof this.lines[i] === 'string') return this.lines[i];
+    }
+    return '';
+  },
+
+  skipToEnd() {
+    if (!this.visible) return;
+    this.sceneRunId++;
+    this.typing = false;
+    this.stopTalking();
+    if (this.autoHideTimer) {
+      clearTimeout(this.autoHideTimer);
+      this.autoHideTimer = null;
+    }
+    this.lineIndex = this.lines.length;
+    this.sceneFinished = true;
+    this.awaitingCloseClick = true;
+    const finalLine = this._getFinalLine();
+    if (finalLine) this.textEl.textContent = finalLine;
+    this.closeBtn.style.display = '';
+  },
+
+  stepOrClose() {
+    if (!this.visible) return;
+    if (this.awaitingCloseClick) {
+      this.close();
+      return;
+    }
+    if (this.typing || !this.sceneFinished) {
+      this.skipToEnd();
+      return;
+    }
+    this.close();
   },
 
   // -- Scene definitions --
@@ -1452,6 +1869,7 @@ const prospector = {
   scene1_gameLoad() {
     if (this.seenScenes.has(1)) return;
     this.seenScenes.add(1);
+    markOnboardingSeen();
     this.scene = 1;
     this.playScene([
       "That's it. Stomp 'em good, boys.",
@@ -1533,7 +1951,10 @@ const prospector = {
 };
 
 document.getElementById('btn-close').addEventListener('click', () => prospector.close());
-setTimeout(() => prospector.scene1_gameLoad(), 2000);
+prospector.overlay?.addEventListener('click', (e) => {
+  if (e.target === prospector.closeBtn) return;
+  prospector.stepOrClose();
+});
 
 // ==================== MUTE BUTTON ====================
 const muteBtn = document.getElementById('mute-btn');
@@ -1580,5 +2001,8 @@ function gameLoop() {
 }
 
 // ==================== INIT ====================
+applyUpgradeState(upgrades);
+renderUpgradeShop();
+setBootTransform(0);
 connect();
 gameLoop();
