@@ -240,7 +240,10 @@
       gap: 8px;
       padding-right: 28px;
     }
-    .shop-category-title {
+    .shop-category-tab {
+      border: 0;
+      background: transparent;
+      cursor: pointer;
       color: #f0d878;
       font-family: monospace;
       font-size: 13px;
@@ -249,6 +252,15 @@
       border-bottom: 1px solid #6c5a24;
       padding: 4px 4px 6px;
       text-align: center;
+      opacity: 0.7;
+      transition: opacity 0.15s ease-out, border-color 0.15s ease-out;
+    }
+    .shop-category-tab:hover {
+      opacity: 0.95;
+    }
+    .shop-category-tab.active {
+      opacity: 1;
+      border-bottom-color: #f0d878;
     }
     #shop-modal #upgrade-shop {
       max-height: none;
@@ -266,6 +278,9 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+    .upgrade-column.tab-hidden {
+      display: none;
     }
     #shop-modal .upgrade-item {
       background: #0f1014;
@@ -1354,12 +1369,12 @@
       </div>
       <div id="shop-panel">
         <button id="close-shop-btn" aria-label="Close store">x</button>
-        <div class="shop-category-row">
-          <div class="shop-category-title">Fer yer Boot</div>
-          <div class="shop-category-title">Fer yer Roach</div>
+        <div class="shop-category-row" role="tablist" aria-label="Store categories">
+          <button type="button" class="shop-category-tab active" data-store-tab="boot" aria-selected="true">Fer yer Boot</button>
+          <button type="button" class="shop-category-tab" data-store-tab="roach" aria-selected="false">Fer yer Roach</button>
         </div>
         <div id="upgrade-shop">
-          <div class="upgrade-column">
+          <div class="upgrade-column" data-store-tab-content="boot">
             <div class="upgrade-item" data-upgrade="bootSize">
               <div class="upgrade-meta">
                 <span class="upgrade-name">Boot Size</span>
@@ -1382,7 +1397,7 @@
               <button class="upgrade-btn" id="upgrade-btn-rateOfFire">Buy</button>
             </div>
           </div>
-          <div class="upgrade-column">
+          <div class="upgrade-column" data-store-tab-content="roach">
             <div class="upgrade-item" data-upgrade="goldMagnet">
               <div class="upgrade-meta">
                 <span class="upgrade-name">Gold Attraction</span>

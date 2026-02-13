@@ -186,6 +186,8 @@ const shopPanelEl = document.getElementById('shop-panel');
 const openShopBtn = document.getElementById('open-shop-btn');
 const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
 const closeShopBtn = document.getElementById('close-shop-btn');
+const shopCategoryTabBtns = Array.from(document.querySelectorAll('.shop-category-tab'));
+const shopCategoryColumns = Array.from(document.querySelectorAll('.upgrade-column[data-store-tab-content]'));
 const shopProspectorFaceEl = document.getElementById('shop-prospector-face');
 const shopProspectorTextEl = document.getElementById('shop-prospector-text');
 const SHOP_PROSPECTOR_DEFAULT_LINE = "Hover an upgrade and I'll tell ya what it does.";
@@ -203,6 +205,7 @@ let shopProspectorTalkTimer = null;
 let shopProspectorMouthTimer = null;
 let shopProspectorTypeTimer = null;
 let shopProspectorAnimRunId = 0;
+let currentStoreTab = 'boot';
 
 function applyUpgradeState(rawUpgrades) {
   upgrades = sanitizeUpgrades(rawUpgrades);
@@ -256,6 +259,7 @@ function setShopModalOpen(isOpen) {
   shopModal.classList.toggle('visible', !!isOpen);
   if (isOpen) {
     setShopProspectorLine(null);
+    setStoreTab(currentStoreTab, true);
     return;
   }
   shopProspectorAnimRunId++;
@@ -268,6 +272,28 @@ function setShopModalOpen(isOpen) {
     shopProspectorTalkTimer = null;
   }
   stopShopProspectorTalking();
+}
+
+function isStoreTabMode() {
+  return window.innerWidth <= 640;
+}
+
+function setStoreTab(tabKey, force = false) {
+  if (!shopCategoryTabBtns.length || !shopCategoryColumns.length) return;
+  const nextTab = tabKey === 'roach' ? 'roach' : 'boot';
+  if (!force && nextTab === currentStoreTab) return;
+  currentStoreTab = nextTab;
+  const tabMode = isStoreTabMode();
+
+  for (const btn of shopCategoryTabBtns) {
+    const isActive = btn.dataset.storeTab === currentStoreTab;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  }
+  for (const col of shopCategoryColumns) {
+    const isMatch = col.dataset.storeTabContent === currentStoreTab;
+    col.classList.toggle('tab-hidden', tabMode && !isMatch);
+  }
 }
 
 function stopShopProspectorTalking() {
@@ -1585,6 +1611,9 @@ document.getElementById('mobile-heal-btn')?.addEventListener('click', () => {
 openShopBtn?.addEventListener('click', () => setShopModalOpen(true));
 mobileOpenShopBtn?.addEventListener('click', () => setShopModalOpen(true));
 closeShopBtn?.addEventListener('click', () => setShopModalOpen(false));
+for (const tabBtn of shopCategoryTabBtns) {
+  tabBtn.addEventListener('click', () => setStoreTab(tabBtn.dataset.storeTab || 'boot'));
+}
 shopModal?.addEventListener('click', (e) => {
   if (e.target === shopModal) setShopModalOpen(false);
 });
@@ -1597,6 +1626,7 @@ for (const key of UPGRADE_ORDER) {
   btn?.addEventListener('click', () => tryPurchaseUpgrade(key));
   btn?.addEventListener('focus', () => setShopProspectorLine(key));
 }
+window.addEventListener('resize', () => setStoreTab(currentStoreTab, true));
 
 // ==================== MOBILE TOUCH CONTROLS ====================
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -2003,6 +2033,7 @@ function gameLoop() {
 // ==================== INIT ====================
 applyUpgradeState(upgrades);
 renderUpgradeShop();
+setStoreTab(currentStoreTab, true);
 setBootTransform(0);
 connect();
 gameLoop();
