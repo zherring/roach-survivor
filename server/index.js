@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { GameServer } from './game-server.js';
+import { db } from './db.js';
 
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
@@ -57,23 +58,63 @@ const wss = new WebSocketServer({ server });
 const gameServer = new GameServer();
 
 wss.on('connection', (ws) => {
-  const playerId = gameServer.addPlayer(ws);
+  let playerId = null;
+  let initialized = false;
+
+  // Set a timeout — if no message arrives within 1s, add as new player
+  const initTimeout = setTimeout(() => {
+    if (!initialized) {
+      initialized = true;
+      playerId = gameServer.addPlayer(ws);
+    }
+  }, 1000);
 
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
-      gameServer.handleMessage(playerId, msg);
+
+      // First message: check for reconnect token
+      if (!initialized) {
+        initialized = true;
+        clearTimeout(initTimeout);
+        if (msg.type === 'reconnect' && typeof msg.token === 'string') {
+          playerId = gameServer.addPlayer(ws, msg.token);
+        } else {
+          playerId = gameServer.addPlayer(ws);
+          // Process this first message normally too
+          if (playerId) gameServer.handleMessage(playerId, msg);
+        }
+        return;
+      }
+
+      if (playerId) {
+        gameServer.handleMessage(playerId, msg);
+      }
     } catch (e) {
       // ignore malformed messages
     }
   });
 
   ws.on('close', () => {
-    gameServer.removePlayer(playerId);
+    clearTimeout(initTimeout);
+    if (playerId) {
+      gameServer.removePlayer(playerId);
+    }
   });
 });
 
 gameServer.start();
+
+// Graceful shutdown
+function shutdown() {
+  console.log('Shutting down...');
+  gameServer.saveSessions();
+  db.close();
+  console.log('State saved. Exiting.');
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 server.listen(PORT, () => {
   console.log(`$ROACH server running on http://localhost:${PORT}`);

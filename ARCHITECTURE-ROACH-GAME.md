@@ -59,11 +59,11 @@ This document started as a proposal (see git history for the original draft). It
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Payments/Indexer | Not started | No crypto integration yet |
-| Persistence Layer | Not started | All state in-memory, lost on restart |
+| Persistence Layer | **Done (M5)** | SQLite via better-sqlite3, session tokens, reconnection |
 | Admin Console | Not started | No ops tooling |
 | Wallet Connect | Not started | No auth at all — anonymous sessions |
 | State Deltas | Skipped | Full snapshots instead (simpler, works fine) |
-| Session Restore | Partial | Client auto-reconnects on disconnect, but no session token — player starts fresh |
+| Session Restore | **Done (M5)** | UUID session tokens in localStorage, 5-min restore window, banked balance persists forever |
 | Room Sharding (multi-process) | Not started | Single process handles all rooms |
 
 ### Current File Map
@@ -76,7 +76,8 @@ kolkata/
 │   ├── room.js            # Per-room sim: physics, stomps, AoE, spawns (266 lines)
 │   ├── roach.js           # Entity: movement, speed calc, hit/die (185 lines)
 │   ├── house-bot.js       # Bot AI: targeting, pursuit, AoE stomp (156 lines)
-│   └── motel.js           # Banking: spawn/despawn, collision, progress (115 lines)
+│   ├── motel.js           # Banking: spawn/despawn, collision, progress (115 lines)
+│   └── db.js              # SQLite persistence: players, sessions, bulk saves (105 lines)
 ├── client/
 │   ├── index.html         # Full UI + CSS + mobile layout + prospector NPC (1007 lines)
 │   ├── game.js            # Network, prediction, rendering, VFX, audio, touch controls (1516 lines)
@@ -149,7 +150,7 @@ What was built:
 4. **Sprite scaling** — all sprites scaled ~35% larger (roach 35->47px, boot 100->135px, bot 80->108px) with matching AoE radius bump (60->81px) — PR #5
 5. **Combo kill VFX** — coin shower animations scale with consecutive kills — PR #2
 6. **Stomp VFX** — screen shake, shockwave effects on impact — PR #2
-7. **Prospector tutorial NPC** — "Old Cletus" with typewriter dialogue, event-driven onboarding (first kill, first death, first bank, etc.), dismissible — PR #5
+7. **Prospector tutorial NPC** — 4-scene reactive tutorial with typewriter dialogue, deliberate beats/silence, no explicit instruction — player learns by doing. Scenes: game load, first kill, growth threshold, motel discovery. Auto-dismiss on scenes 2-4, close button only (no "go on"/"go away").
 8. **Floating heal hint** — "SPACE TO HEAL" appears above injured player — PR #5
 9. **Death splat animations, banking progress VFX** — visual feedback for all major actions
 
@@ -191,24 +192,21 @@ What was built:
 
 ---
 
-### M5: Persistence & Reconnection -- NOT STARTED
+### M5: Persistence & Reconnection -- DONE
 **Goal:** Banked balances survive server restarts. Players can reconnect after drops.
-**Effort:** 1 day
-**Blocked by:** Nothing (deploy-ready)
 
-What exists now:
-- Client auto-reconnects on WebSocket close (2s delay) — but starts a fresh session
-- No session tokens, no state restoration, no persistence
+What was built:
+1. **SQLite persistence** via `better-sqlite3` — `players` table (id, name, banked_balance, total_kills) + `sessions` table (room, position, balance, hp)
+2. **Session tokens** — UUID v4 generated on first connect, stored in localStorage, sent on reconnect
+3. **Reconnect with restore** — within 5 minutes: full position/room/balance/hp restore. After 5 minutes: fresh spawn but banked balance preserved forever
+4. **Graceful shutdown** — SIGTERM/SIGINT handlers flush all sessions to DB before exit
+5. **Periodic saves** — bulk session writes every ~10 seconds in tick loop
+6. **Kill tracking** — lifetime kill stats persisted per player
+7. **WAL mode** — for concurrent read/write performance
 
-What still needs to be built:
-1. **SQLite (or JSON file) persistence** for banked balances, player names, upgrade state
-2. **Session tokens** — localStorage on client, generated ID maps to persistent player record
-3. **Reconnect with restore** — server restores player to their room with banked balance intact
-4. **Graceful shutdown** — server writes state to disk on SIGTERM
+Files: new `server/db.js` (~105 lines), modified `server/game-server.js`, `server/index.js`, `client/game.js`
 
-Files: new `server/db.js`, `server/game-server.js` (session restore, shutdown hook), `client/game.js` (session storage)
-
-**Why next:** Losing progress on server restart is the #1 frustration for real players. This is the foundation for upgrades, leaderboards, and crypto.
+**Why this matters:** Foundation for M6 (upgrades), M7 (leaderboards), and M8 (crypto).
 
 ---
 
@@ -265,26 +263,26 @@ Files: new `server/indexer.js`, new `server/admin.js`, `client/game.js` (wallet 
 
 ## Part 3: Current Status & Path to Shareable
 
-### What's Done (M1-M4)
+### What's Done (M1-M5)
 ```
-M1 (Deploy)  -- DONE  -- Server is deploy-ready, Railway-compatible
-M2 (Visual)  -- DONE  -- Sprites scaled, VFX, prospector NPC, heal hints
-M3 (Sound)   -- DONE  -- 7 SFX, AudioManager, mobile unlock, mute
-M4 (Mobile)  -- DONE  -- Joystick, tap-stomp, responsive layout, mobile HUD
+M1 (Deploy)      -- DONE  -- Server is deploy-ready, Railway-compatible
+M2 (Visual)      -- DONE  -- Sprites scaled, VFX, prospector NPC, heal hints
+M3 (Sound)       -- DONE  -- 7 SFX, AudioManager, mobile unlock, mute
+M4 (Mobile)      -- DONE  -- Joystick, tap-stomp, responsive layout, mobile HUD
+M5 (Persistence) -- DONE  -- SQLite, session tokens, reconnection, graceful shutdown
 ```
 
 **The game is fully playable and shareable right now.** Desktop + mobile, sound, tutorial NPC, visual polish. The only manual step is connecting the repo to Railway (or any Node host).
 
-### What's NOT Done (M5-M8)
+### What's NOT Done (M6-M8)
 ```
-M5 (Persistence)  -- NOT STARTED  -- In-memory only, no session restore
 M6 (Upgrades)     -- NOT STARTED  -- Nothing to spend money on yet
 M7 (Agents)       -- NOT STARTED  -- Protocol is ready, needs SDK/docs
-M8 (Crypto)       -- NOT STARTED  -- Needs M5+M6 first
+M8 (Crypto)       -- NOT STARTED  -- Needs M6 first
 ```
 
 ### Bonus Work Completed (not in original milestones)
-- **Prospector tutorial NPC** — full onboarding system with event-driven contextual tips
+- **Prospector tutorial rewrite** — replaced instructional 3-message onboarding + 6 event triggers with 4-scene reactive system: (1) game load intro, (2) first kill reaction, (3) growth warning, (4) motel hint. No explicit mechanic explanation — humor carries the learning. Single [Close] button, auto-dismiss on reactive scenes.
 - **Security hardening** — rate limiting, input validation, XSS prevention, path traversal protection
 - **Balance math fix** — death penalty correctly applied before `die()`
 - **Motel banking improvement** — gradual progress degradation instead of hard reset

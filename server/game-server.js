@@ -5,6 +5,7 @@ import {
 import { Room } from './room.js';
 import { Roach } from './roach.js';
 import { Motel } from './motel.js';
+import { db } from './db.js';
 
 const ADJECTIVES = ['Speedy', 'Sneaky', 'Giant', 'Tiny', 'Stinky', 'Slimy', 'Crunchy', 'Greasy', 'Fuzzy', 'Crusty'];
 const NOUNS = ['Roach', 'Bug', 'Crawler', 'Scuttler', 'Skitter', 'Creeper', 'Muncher', 'Nibbler', 'Dasher', 'Lurker'];
@@ -76,6 +77,11 @@ export class GameServer {
     this.motel = new Motel();
     this.tickCount = 0;
     this.botAdjustTimer = 0;
+    this.sessionSaveTimer = 0;
+
+    // Clean stale sessions on startup
+    const cleaned = db.cleanStaleSessions();
+    if (cleaned) console.log(`Cleaned ${cleaned} stale sessions`);
 
     // Create 3x3 grid
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -94,18 +100,52 @@ export class GameServer {
     console.log(`Game server started: ${GRID_SIZE}x${GRID_SIZE} grid, ${TICK_RATE}ms tick`);
   }
 
-  addPlayer(ws) {
-    const name = `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${NOUNS[Math.floor(Math.random() * NOUNS.length)]}`;
-    const roomKey = '1,1'; // Center room
+  addPlayer(ws, reconnectToken = null) {
+    let token = reconnectToken;
+    let name, roomKey, bankedBalance, restored;
+
+    // Try to restore from DB
+    let session = null;
+    if (token) {
+      const existing = db.getPlayer(token);
+      if (existing) {
+        name = existing.name;
+        bankedBalance = existing.banked_balance;
+        session = db.getSession(token);
+        roomKey = session ? session.room : '1,1';
+        // Validate room exists
+        if (!this.rooms.has(roomKey)) roomKey = '1,1';
+        restored = !!session;
+        console.log(`Player reconnecting: ${name} (${token.slice(0, 8)}...)${restored ? ' [session restored]' : ''}`);
+      } else {
+        token = null; // Invalid token, treat as new
+      }
+    }
+
+    // New player
+    if (!token) {
+      name = `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${NOUNS[Math.floor(Math.random() * NOUNS.length)]}`;
+      token = db.createPlayer(name);
+      roomKey = '1,1';
+      bankedBalance = 0;
+      restored = false;
+    }
+
     const room = this.rooms.get(roomKey);
-    const roach = new Roach(true, 0, name);
+    const roach = new Roach(true, session ? session.balance : 0, name);
+    if (session) {
+      roach.x = session.position_x;
+      roach.y = session.position_y;
+      roach.hp = session.hp;
+    }
     room.roaches.push(roach);
 
     const player = {
       ws,
       roach,
       room: roomKey,
-      bankedBalance: 0,
+      token,
+      bankedBalance: bankedBalance || 0,
       lastStomp: 0,
       lastHeal: 0,
       cursorX: INVALID_CURSOR,
@@ -119,11 +159,13 @@ export class GameServer {
     this.send(ws, {
       type: 'welcome',
       id: roach.id,
+      token,
       name,
       room: roomKey,
       snapshot: room.serialize(),
       motel: this.motel.serialize(),
       gridSize: GRID_SIZE,
+      restored,
     });
 
     console.log(`Player joined: ${name} (${roach.id}) in room ${roomKey}`);
@@ -133,6 +175,15 @@ export class GameServer {
   removePlayer(playerId) {
     const player = this.players.get(playerId);
     if (!player) return;
+
+    // Save session state to DB for reconnection
+    if (player.token) {
+      db.updateSession(
+        player.token, player.room,
+        player.roach.x, player.roach.y,
+        player.roach.balance, player.roach.hp
+      );
+    }
 
     const room = this.rooms.get(player.room);
     if (room) {
@@ -245,9 +296,29 @@ export class GameServer {
           player.bankedBalance += player.roach.balance;
           player.roach.balance = 0;
           evt.totalBanked = player.bankedBalance;
+          if (player.token) {
+            db.updateBankedBalance(player.token, player.bankedBalance);
+          }
         }
       }
       allEvents.push(evt);
+    }
+
+    // Track kills in DB
+    for (const evt of allEvents) {
+      if (evt.type === 'stomp_kill' && evt.stomperId) {
+        const killer = this.players.get(evt.stomperId);
+        if (killer && killer.token) {
+          db.incrementKills(killer.token);
+        }
+      }
+    }
+
+    // Periodic session save (every 200 ticks = ~10s)
+    this.sessionSaveTimer++;
+    if (this.sessionSaveTimer >= 200) {
+      this.sessionSaveTimer = 0;
+      this.saveSessions();
     }
 
     // Adjust bots every ~60 ticks (3 seconds)
@@ -329,6 +400,26 @@ export class GameServer {
       snapshot: newRoom.serialize(),
       motel: this.motel.serialize(),
     });
+  }
+
+  saveSessions() {
+    const sessions = [];
+    const now = Date.now();
+    for (const [, player] of this.players) {
+      if (!player.token) continue;
+      sessions.push({
+        playerId: player.token,
+        room: player.room,
+        x: player.roach.x,
+        y: player.roach.y,
+        balance: player.roach.balance,
+        hp: player.roach.hp,
+        timestamp: now,
+      });
+    }
+    if (sessions.length > 0) {
+      db.bulkUpdateSessions(sessions);
+    }
   }
 
   send(ws, msg) {

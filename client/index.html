@@ -10,14 +10,43 @@
       background: #111;
       color: #fff;
       font-family: monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    h1 { color: #0f0; margin-bottom: 10px; font-size: 18px; }
+
+    /* ==================== DESKTOP 3-COLUMN LAYOUT ==================== */
+    #desktop-layout {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: flex-start;
+      gap: 20px;
+      padding: 20px;
+      height: 100vh;
+    }
+    #left-panel {
+      flex: 0 0 200px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 5px;
+    }
+    #center-panel {
+      flex: 1 1 0%;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
-      padding: 20px;
-      overflow-x: hidden;
     }
-    h1 { color: #0f0; margin-bottom: 10px; }
+    #right-panel {
+      flex: 0 0 260px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 5px;
+      height: 100%;
+    }
 
     #connection-status {
       color: #f00;
@@ -29,9 +58,9 @@
     /* ==================== DESKTOP STATS ==================== */
     #stats {
       display: flex;
-      gap: 30px;
-      margin-bottom: 10px;
-      font-size: 14px;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 13px;
     }
     .stat { color: #aaa; }
     .stat span { color: #ff0; font-weight: bold; }
@@ -52,7 +81,6 @@
     #room-grid {
       display: grid;
       gap: 5px;
-      margin-bottom: 10px;
     }
     .room-cell {
       width: 50px;
@@ -123,17 +151,31 @@
         height: 100vh;
         height: 100dvh;
         overflow: hidden;
-        justify-content: flex-start;
+      }
+
+      /* Collapse 3-col to single column */
+      #desktop-layout {
+        flex-direction: column;
+        align-items: center;
+        padding: 0;
+        gap: 0;
+        min-height: auto;
       }
 
       /* Hide desktop-only elements */
+      #left-panel { display: none; }
+      #right-panel { display: none; }
       h1 { display: none; }
       #player-count { display: none; }
       #controls { display: none; }
       #log { display: none; }
+      #log-label { display: none; }
       #stats { display: none; }
       #room-grid { display: none; }
+      /* On mobile, connection-status is inside hidden left-panel,
+         so we force it visible and fixed-position */
       #connection-status {
+        display: block !important;
         position: fixed;
         top: 2px;
         right: 46px;
@@ -303,20 +345,21 @@
     /* ==================== ROACH SPRITES ==================== */
     .roach {
       position: absolute;
-      width: 47px;
-      height: 47px;
+      width: 40px;
+      height: 40px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 270px 270px;
+      background-size: 230px 230px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
-      background-position: -14px -27px;
+      background-position: -12px -23px;
       transition: filter 0.1s;
       transform-origin: center center;
       z-index: 10;
+      mix-blend-mode: screen;
     }
-    .roach.crawling { background-position: -81px -27px; }
-    .roach.hurt { background-position: -149px -27px; }
+    .roach.crawling { background-position: -69px -23px; }
+    .roach.hurt { background-position: -127px -23px; }
     .roach.hurt::after {
       content: '';
       position: absolute;
@@ -331,7 +374,7 @@
       30% { opacity: 0.9; }
       100% { opacity: 0; transform: scale(1); }
     }
-    .roach.dead { background-position: -216px -27px; }
+    .roach.dead { background-position: -184px -23px; }
     .roach.rich { filter: brightness(1.2) sepia(0.8) hue-rotate(10deg) saturate(2); }
     .roach.player-self {
       filter: brightness(1.3) sepia(1) hue-rotate(130deg) saturate(3);
@@ -395,12 +438,12 @@
     /* ==================== BOOT CURSOR ==================== */
     .boot {
       position: absolute;
-      width: 135px;
-      height: 149px;
+      width: 115px;
+      height: 127px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 405px 405px;
-      background-position: -36px -220px;
+      background-size: 344px 344px;
+      background-position: -31px -187px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       pointer-events: none;
@@ -410,10 +453,11 @@
       z-index: 100;
       transition: transform 0.1s ease-out;
       filter: brightness(1) sepia(1) hue-rotate(70deg) saturate(2);
+      mix-blend-mode: screen;
     }
     .boot.hovering { opacity: 0.6; }
     .boot.stomping {
-      background-position: -239px -220px;
+      background-position: -203px -187px;
       animation: stomp 0.15s ease-out;
     }
     @keyframes stomp {
@@ -432,12 +476,12 @@
     /* ==================== HOUSE BOT ==================== */
     .house-bot {
       position: absolute;
-      width: 108px;
-      height: 119px;
+      width: 92px;
+      height: 101px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 324px 324px;
-      background-position: -30px -176px;
+      background-size: 276px 276px;
+      background-position: -26px -150px;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       pointer-events: none;
@@ -445,9 +489,10 @@
       transition: left 0.05s linear, top 0.05s linear;
       transform-origin: center center;
       filter: brightness(1) sepia(1) hue-rotate(-30deg) saturate(3);
+      mix-blend-mode: screen;
     }
     .house-bot.stomping {
-      background-position: -192px -176px;
+      background-position: -163px -150px;
       animation: bot-stomp 0.25s ease-out;
     }
     @keyframes bot-stomp {
@@ -490,16 +535,17 @@
 
     .splat {
       position: absolute;
-      width: 68px;
-      height: 68px;
+      width: 58px;
+      height: 58px;
       background-image: url('assets/game-sprite.png');
       background-repeat: no-repeat;
-      background-size: 270px 270px;
-      background-position: -216px -27px;
+      background-size: 230px 230px;
+      background-position: -184px -23px;
       image-rendering: pixelated;
       pointer-events: none;
       filter: brightness(0.6) sepia(1) hue-rotate(60deg) saturate(2);
       animation: splat-fade 1.2s ease-out forwards;
+      mix-blend-mode: screen;
     }
     @keyframes splat-fade {
       0% { transform: scale(0.3) rotate(0deg); opacity: 1; }
@@ -705,10 +751,9 @@
     #banked-display { color: #f0c040; font-weight: bold; }
 
     #controls {
-      margin-top: 15px;
-      color: #888;
-      font-size: 12px;
-      text-align: center;
+      color: #666;
+      font-size: 11px;
+      line-height: 1.6;
     }
     #controls kbd {
       background: #333;
@@ -717,15 +762,21 @@
     }
 
     #log {
-      margin-top: 15px;
-      width: 600px;
-      height: 80px;
+      width: 100%;
+      flex: 1 1 0%;
+      min-height: 0;
       overflow-y: auto;
       background: #0a0a0a;
       border: 1px solid #333;
       padding: 10px;
       font-size: 11px;
       color: #666;
+    }
+    #log-label {
+      color: #666;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
     #log .kill { color: #0f0; }
     #log .death { color: #f00; }
@@ -814,18 +865,12 @@
       cursor: pointer;
       border: 2px solid;
     }
-    #btn-go-on {
-      background: #1a3a1a;
-      border-color: #0a0;
-      color: #0f0;
+    #btn-close {
+      background: #2a2a2a;
+      border-color: #666;
+      color: #ccc;
     }
-    #btn-go-on:hover { background: #2a5a2a; }
-    #btn-go-away {
-      background: #3a1a1a;
-      border-color: #a00;
-      color: #f66;
-    }
-    #btn-go-away:hover { background: #5a2a2a; }
+    #btn-close:hover { background: #3a3a3a; }
 
     @media (max-width: 640px) {
       #prospector-face { width: 200px; height: 200px; }
@@ -916,62 +961,85 @@
 </head>
 <body>
   <button id="mute-btn" title="Toggle sound">♪</button>
-  <h1>$ROACH MULTIPLAYER</h1>
-  <div id="connection-status">Connecting...</div>
-  <div id="player-count"></div>
 
-  <div id="stats">
-    <div class="stat">$ROACH: <span id="balance">0.00</span></div>
-    <div class="stat" id="banked-display">BANKED: <span id="banked">0.00</span></div>
-    <div class="stat">HP: <span id="player-hp">2</span>/2 <button id="heal-btn">Heal ($1)</button></div>
-    <div class="stat">Alive: <span id="alive-time">0s</span></div>
-    <div class="stat">Kills: <span id="kills">0</span></div>
-    <div class="stat">Room: <span id="current-room">1,1</span></div>
-  </div>
+  <div id="desktop-layout">
+    <!-- LEFT PANEL: title, stats, minimap, controls -->
+    <div id="left-panel">
+      <h1>$ROACH</h1>
+      <div id="connection-status">Connecting...</div>
+      <div id="player-count"></div>
 
-  <div id="room-grid"></div>
+      <div id="stats">
+        <div class="stat">$ROACH: <span id="balance">0.00</span></div>
+        <div class="stat" id="banked-display">BANKED: <span id="banked">0.00</span></div>
+        <div class="stat">HP: <span id="player-hp">2</span>/2 <button id="heal-btn">Heal ($1)</button></div>
+        <div class="stat">Alive: <span id="alive-time">0s</span></div>
+        <div class="stat">Kills: <span id="kills">0</span></div>
+        <div class="stat">Room: <span id="current-room">1,1</span></div>
+      </div>
 
-  <!-- Mobile HUD — stats above game (shown on mobile only via CSS) -->
-  <div id="mobile-hud">
-    <div class="hud-group">
-      <span class="hud-label">$ROACH</span>
-      <span class="hud-value" id="m-balance">0.00</span>
+      <div id="room-grid"></div>
+
+      <div id="controls">
+        <kbd>Click</kbd> stomp<br>
+        <kbd>WASD</kbd> steer roach<br>
+        <kbd>Space</kbd> heal ($1)<br>
+        Walk off edges to change rooms<br>
+        Enter <span style="color:#f0c040">MOTEL</span> to bank $ROACH
+      </div>
     </div>
-    <div class="hud-group">
-      <span class="hud-label">Banked</span>
-      <span class="hud-value banked" id="m-banked">0.00</span>
-    </div>
-    <div class="hud-group">
-      <span class="hud-label">HP</span>
-      <span class="hud-value hp" id="m-hp">2/2</span>
-    </div>
-    <div class="hud-group">
-      <span class="hud-label">Kills</span>
-      <span class="hud-value kills" id="m-kills">0</span>
-    </div>
-  </div>
 
-  <div id="game-wrapper">
-    <div id="game-container">
-      <div id="boot" class="boot"></div>
-      <div id="roach-motel" class="roach-motel hidden"></div>
-      <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
-      <div id="player-arrow" class="player-arrow"></div>
-      <div id="heal-hint">SPACE TO HEAL</div>
+    <!-- CENTER PANEL: game area -->
+    <div id="center-panel">
+      <!-- Mobile HUD — stats above game (shown on mobile only via CSS) -->
+      <div id="mobile-hud">
+        <div class="hud-group">
+          <span class="hud-label">$ROACH</span>
+          <span class="hud-value" id="m-balance">0.00</span>
+        </div>
+        <div class="hud-group">
+          <span class="hud-label">Banked</span>
+          <span class="hud-value banked" id="m-banked">0.00</span>
+        </div>
+        <div class="hud-group">
+          <span class="hud-label">HP</span>
+          <span class="hud-value hp" id="m-hp">2/2</span>
+        </div>
+        <div class="hud-group">
+          <span class="hud-label">Kills</span>
+          <span class="hud-value kills" id="m-kills">0</span>
+        </div>
+      </div>
+
+      <div id="game-wrapper">
+        <div id="game-container">
+          <div id="boot" class="boot"></div>
+          <div id="roach-motel" class="roach-motel hidden"></div>
+          <div id="motel-timer">MOTEL: <span id="timer-countdown">--</span><span id="timer-room" class="room-indicator"></span></div>
+          <div id="player-arrow" class="player-arrow"></div>
+          <div id="heal-hint">SPACE TO HEAL</div>
+        </div>
+      </div>
+
+      <!-- Mobile heal bar — directly under game (shown on mobile only via CSS) -->
+      <div id="mobile-heal-bar">
+        <button id="mobile-heal-btn">HEAL $1</button>
+      </div>
+
+      <!-- Mobile minimap — below heal bar (shown on mobile only via CSS) -->
+      <div id="mobile-minimap"></div>
+      <div id="mobile-motel-info">
+        <span id="mm-motel-icon">MOTEL</span>
+        <span id="mm-motel-countdown">--</span>
+        <span id="mm-motel-room"></span>
+      </div>
     </div>
-  </div>
 
-  <!-- Mobile heal bar — directly under game (shown on mobile only via CSS) -->
-  <div id="mobile-heal-bar">
-    <button id="mobile-heal-btn">HEAL $1</button>
-  </div>
-
-  <!-- Mobile minimap — below heal bar (shown on mobile only via CSS) -->
-  <div id="mobile-minimap"></div>
-  <div id="mobile-motel-info">
-    <span id="mm-motel-icon">MOTEL</span>
-    <span id="mm-motel-countdown">--</span>
-    <span id="mm-motel-room"></span>
+    <!-- RIGHT PANEL: event feed -->
+    <div id="right-panel">
+      <div id="log-label">Feed</div>
+      <div id="log"></div>
+    </div>
   </div>
 
   <div id="joystick-zone">
@@ -979,12 +1047,6 @@
       <div id="joystick-knob"></div>
     </div>
   </div>
-
-  <div id="controls">
-    <kbd>Click</kbd> to stomp | <kbd>WASD</kbd> to steer your roach off edges to change rooms | Enter <span style="color:#f0c040">ROACH MOTEL</span> to bank your $ROACH!
-  </div>
-
-  <div id="log"></div>
 
   <!-- Prospector NPC -->
   <div id="prospector-overlay">
@@ -996,8 +1058,7 @@
         <div id="prospector-text"></div>
       </div>
       <div id="prospector-buttons">
-        <button id="btn-go-on">go on...</button>
-        <button id="btn-go-away">go away!</button>
+        <button id="btn-close">[Close]</button>
       </div>
     </div>
   </div>
