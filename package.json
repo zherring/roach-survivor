@@ -8,6 +8,7 @@
     "dev": "node --watch server/index.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "ws": "^8.16.0"
   },
   "engines": {

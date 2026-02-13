@@ -147,9 +147,18 @@ const healHint = document.getElementById('heal-hint');
 
 // Responsive scaling
 let scaleFactor = 1;
+const centerPanel = document.getElementById('center-panel');
 function updateScale() {
   const isMobile = window.innerWidth <= 640;
-  const availWidth = isMobile ? window.innerWidth : Math.min(document.body.clientWidth - 10, CONTAINER_WIDTH);
+  let availWidth;
+  if (isMobile) {
+    availWidth = window.innerWidth;
+  } else {
+    // Use center panel's actual width, constrained by aspect ratio to viewport height
+    const panelWidth = centerPanel ? centerPanel.clientWidth : CONTAINER_WIDTH;
+    const maxHeightScale = (window.innerHeight - 60) / CONTAINER_HEIGHT; // 60px for padding
+    availWidth = Math.min(panelWidth, CONTAINER_WIDTH * maxHeightScale);
+  }
   scaleFactor = availWidth / CONTAINER_WIDTH;
   container.style.setProperty('--game-scale', scaleFactor);
   wrapper.style.width = (CONTAINER_WIDTH * scaleFactor) + 'px';
@@ -178,6 +187,7 @@ function getVisibleStatEl(desktopEl, mobileEl) {
 // ==================== NETWORK ====================
 let ws = null;
 let connected = false;
+let sessionToken = localStorage.getItem('roach_session_token');
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -187,7 +197,9 @@ function connect() {
     connected = true;
     statusEl.textContent = 'Connected';
     statusEl.className = 'connected';
-    log('<span style="color:#0f0">Connected to server!</span>');
+    if (sessionToken) {
+      send({ type: 'reconnect', token: sessionToken });
+    }
   };
 
   ws.onmessage = (e) => {
@@ -220,11 +232,20 @@ function handleMessage(msg) {
       lastHealCount = 0;
       currentRoom = msg.room;
       gridSize = msg.gridSize || GRID_SIZE;
+      if (msg.token) {
+        sessionToken = msg.token;
+        localStorage.setItem('roach_session_token', msg.token);
+      }
       buildMinimap();
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
-      log(`<span style="color:#0ff">You are ${escapeHtml(myName)}!</span>`);
-      log('Your roach is <span style="color:#0ff">CYAN</span>. <span style="color:#a00">RED BOOTS</span> hunt wealthy roaches.');
+      if (msg.restored) {
+        log(`<span style="color:#0f0">Reconnected as ${escapeHtml(myName)}! Progress restored.</span>`);
+        AudioManager.play('synth', 0.5);
+      } else {
+        log(`<span style="color:#0ff">You are ${escapeHtml(myName)}!</span>`);
+        log('Your roach is <span style="color:#0ff">CYAN</span>. <span style="color:#a00">RED BOOTS</span> hunt wealthy roaches.');
+      }
       break;
 
     case 'tick':
@@ -1312,37 +1333,45 @@ const prospector = {
   faceWrap: document.getElementById('prospector-face-wrap'),
   face: document.getElementById('prospector-face'),
   textEl: document.getElementById('prospector-text'),
-  queue: [],
+  closeBtn: document.getElementById('btn-close'),
+  lines: [],       // lines in current scene, typed sequentially
+  lineIndex: 0,
   typing: false,
   visible: false,
-  dismissed: false, // "go away!" = permanently gone
+  done: false,      // all 4 scenes complete
   talkTimer: null,
   charIndex: 0,
   currentText: '',
-  // Track which events have been seen — each fires ONCE only
-  seenEvents: new Set(),
+  autoHideTimer: null,
+  scene: 0,         // which scene we're on (0 = not started)
+  seenScenes: new Set(),
 
-  show(text) {
-    if (this.dismissed) return;
+  // -- Core display methods --
+
+  show() {
+    this.visible = true;
+    this.overlay.classList.add('visible');
+  },
+
+  _typeLine(text, onDone) {
     this.currentText = text;
     this.charIndex = 0;
     this.textEl.textContent = '';
-    this.visible = true;
-    this.overlay.classList.add('visible');
-    this.startTalking();
     this.typing = true;
-    this._typeNext();
+    this.startTalking();
+    this._typeNext(onDone);
   },
 
-  _typeNext() {
+  _typeNext(onDone) {
     if (!this.visible) return;
     if (this.charIndex < this.currentText.length) {
       this.charIndex++;
       this.textEl.textContent = this.currentText.slice(0, this.charIndex);
-      setTimeout(() => this._typeNext(), 25 + Math.random() * 20);
+      setTimeout(() => this._typeNext(onDone), 25 + Math.random() * 20);
     } else {
       this.typing = false;
       this.stopTalking();
+      if (onDone) onDone();
     }
   },
 
@@ -1368,104 +1397,143 @@ const prospector = {
     this.overlay.classList.remove('visible');
     this.stopTalking();
     this.typing = false;
+    this.lines = [];
+    this.lineIndex = 0;
+    if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
   },
 
-  // "go on..." — skip to next or close
-  advance() {
-    this.typing = false;
-    if (this.queue.length > 0) {
-      this.show(this.queue.shift());
-    } else {
-      this.hide();
-    }
-  },
-
-  // "go away!" — gone forever
-  goAway() {
-    this.dismissed = true;
-    this.queue = [];
-    this.typing = false;
+  close() {
     this.hide();
   },
 
-  say(text) {
-    if (this.dismissed) return;
-    if (this.visible) {
-      this.queue.push(text);
+  // -- Scene system: play a sequence of lines with delays --
+
+  playScene(lines, opts = {}) {
+    if (this.done) return;
+    const { showClose = false, autoHide = false, autoHideDelay = 2000 } = opts;
+    this.lines = lines;
+    this.lineIndex = 0;
+    this.closeBtn.style.display = showClose ? '' : 'none';
+    this.show();
+    this._playNextLine(autoHide, autoHideDelay);
+  },
+
+  _playNextLine(autoHide, autoHideDelay) {
+    if (this.lineIndex >= this.lines.length) {
+      // All lines done
+      if (autoHide) {
+        this.autoHideTimer = setTimeout(() => this.hide(), autoHideDelay);
+      }
+      return;
+    }
+
+    const entry = this.lines[this.lineIndex];
+    this.lineIndex++;
+
+    if (typeof entry === 'number') {
+      // It's a delay (beat) in ms
+      setTimeout(() => this._playNextLine(autoHide, autoHideDelay), entry);
     } else {
-      this.show(text);
+      // It's a text line
+      this._typeLine(entry, () => {
+        // Small pause after each line before next
+        if (this.lineIndex < this.lines.length) {
+          setTimeout(() => this._playNextLine(autoHide, autoHideDelay), 600);
+        } else {
+          this._playNextLine(autoHide, autoHideDelay);
+        }
+      });
     }
   },
 
-  // Only fires ONCE per event type, ever
-  firstTime(eventType, text) {
-    if (this.dismissed || this.seenEvents.has(eventType)) return;
-    this.seenEvents.add(eventType);
-    this.say(text);
+  // -- Scene definitions --
+
+  // Scene 1: Game load — close button only
+  scene1_gameLoad() {
+    if (this.seenScenes.has(1)) return;
+    this.seenScenes.add(1);
+    this.scene = 1;
+    this.playScene([
+      "That's it. Stomp 'em good, boys.",
+      800,
+      "There's gold in them there cockroaches.",
+    ], { showClose: true });
   },
 
-  startOnboarding() {
-    const msgs = [
-      "Well I'll be! A new roach in these parts! I'm Old Cletus. Use them WASD keys to steer yer roach around.",
-      "CLICK to stomp them other roaches and steal their golden bits! Watch out fer them RED BOOTS though.",
-      "When the ROACH MOTEL shows up, crawl inside and hold still to BANK yer gold. Now git stompin'!"
-    ];
-    this.say(msgs[0]);
-    for (let i = 1; i < msgs.length; i++) this.queue.push(msgs[i]);
+  // Scene 2: First kill — auto-dismiss
+  scene2_firstKill() {
+    if (this.seenScenes.has(2)) return;
+    this.seenScenes.add(2);
+    this.scene = 2;
+    this.playScene([
+      "\u2026",
+      1200,
+      "Hoo-wee.",
+      1000,
+      "We got ourselves a real roach stomper here.",
+      800,
+      "Stomp more of 'em, boy.",
+    ], { autoHide: true, autoHideDelay: 2500 });
   },
+
+  // Scene 3: Growth threshold — auto-dismiss
+  scene3_growth() {
+    if (this.seenScenes.has(3)) return;
+    this.seenScenes.add(3);
+    this.scene = 3;
+    this.playScene([
+      "Man\u2026",
+      800,
+      "I bet that roach of yours is gettin' awfully fat.",
+      1200,
+      "Be a shame if someone else came along and stomped him.",
+    ], { autoHide: true, autoHideDelay: 3000 });
+  },
+
+  // Scene 4: Motel discovery — auto-dismiss
+  scene4_motel() {
+    if (this.seenScenes.has(4)) return;
+    this.seenScenes.add(4);
+    this.scene = 4;
+    this.done = true; // last scene
+    this.playScene([
+      "Oh boy\u2026 I bet you bank all that gold your roach has saved up if you hide in the Roach Motel.",
+    ], { autoHide: true, autoHideDelay: 4000 });
+  },
+
+  // -- Event hooks (called from game loop) --
 
   onGameEvent(evt) {
-    if (this.dismissed) return;
-
-    switch (evt.type) {
-      case 'stomp_kill':
-        if (evt.stomperId === myId) {
-          this.firstTime('first_kill', "YEEHAW! Squashed 'im good! That's how we do it in these walls!");
-        }
-        break;
-
-      case 'stomp_hit':
-      case 'bot_hit':
-        if (evt.victimId === myId) {
-          this.firstTime('first_hit', "OOF! Yer roach took a hit! If yer HP gets low, press SPACE or hit Heal to patch up.");
-        }
-        break;
-
-      case 'player_death':
-      case 'bot_kill':
-        if (evt.victimId === myId) {
-          this.firstTime('first_death', "Well shoot! Yer roach got flattened! Don't worry, ya respawn - but ya lose most of yer gold!");
-        }
-        break;
-
-      case 'bank':
-        if (evt.playerId === myId) {
-          this.firstTime('first_bank', "Smart move bankin' them roach bucks! Banked gold is safe even if ya die.");
-        }
-        break;
+    if (this.done) return;
+    // Scene 2: first kill
+    if (evt.type === 'stomp_kill' && evt.stomperId === myId) {
+      // Small delay so kill VFX lands first
+      setTimeout(() => this.scene2_firstKill(), 400);
     }
   },
 
   checkPassive() {
-    if (this.dismissed || !myId) return;
+    if (this.done || !myId) return;
 
-    if (motelData && motelData.active && motelData.room === currentRoom) {
-      this.firstTime('first_motel_here', "HOT DIGGITY! The Roach Motel's here! Crawl inside and hold still to bank yer gold!");
+    // Scene 3: growth threshold (balance > 5 means visible size increase)
+    if (balance > 5 && !this.seenScenes.has(3) && this.seenScenes.has(2)) {
+      this.scene3_growth();
     }
 
-    if (balance > 8) {
-      this.firstTime('first_rich', "Whoa nelly! Yer carryin' a pile of gold! Find that Roach Motel before some boot squashes yer fortune!");
+    // Scene 4: motel discovery (player in same room as active motel)
+    if (motelData && motelData.active && motelData.room === currentRoom
+        && !this.seenScenes.has(4) && this.seenScenes.has(3)) {
+      this.scene4_motel();
     }
   },
 
   onRoomChange() {
-    this.firstTime('first_room', "New room! Check yer minimap - different rooms got different pickin's.");
+    // No scene for room change in new tutorial
   }
 };
 
-document.getElementById('btn-go-on').addEventListener('click', () => prospector.advance());
-document.getElementById('btn-go-away').addEventListener('click', () => prospector.goAway());
-setTimeout(() => prospector.startOnboarding(), 2000);
+document.getElementById('btn-close').addEventListener('click', () => prospector.close());
+setTimeout(() => prospector.scene1_gameLoad(), 2000);
 
 // ==================== MUTE BUTTON ====================
 const muteBtn = document.getElementById('mute-btn');
