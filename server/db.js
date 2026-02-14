@@ -59,6 +59,9 @@ class RoachDB {
     addColumn('wall_bounce_level', 'ALTER TABLE players ADD COLUMN wall_bounce_level INTEGER DEFAULT 0');
     addColumn('idle_income_level', 'ALTER TABLE players ADD COLUMN idle_income_level INTEGER DEFAULT 0');
     addColumn('shell_armor_level', 'ALTER TABLE players ADD COLUMN shell_armor_level INTEGER DEFAULT 0');
+    // M7: platform identity columns
+    addColumn('platform_type', 'ALTER TABLE players ADD COLUMN platform_type TEXT DEFAULT NULL');
+    addColumn('platform_id', 'ALTER TABLE players ADD COLUMN platform_id TEXT DEFAULT NULL');
   }
 
   _prepareStatements() {
@@ -93,6 +96,12 @@ class RoachDB {
       ),
       cleanSessions: this.db.prepare(
         'DELETE FROM sessions WHERE updated_at < ?'
+      ),
+      getPlayerByPlatform: this.db.prepare(
+        'SELECT * FROM players WHERE platform_type = ? AND platform_id = ?'
+      ),
+      linkPlatform: this.db.prepare(
+        'UPDATE players SET platform_type = ?, platform_id = ?, last_seen = ? WHERE id = ?'
       ),
     };
   }
@@ -157,6 +166,14 @@ class RoachDB {
   cleanStaleSessions() {
     const result = this._stmts.cleanSessions.run(Date.now() - SESSION_EXPIRY_MS);
     return result.changes;
+  }
+
+  getPlayerByPlatform(platformType, platformId) {
+    return this._stmts.getPlayerByPlatform.get(platformType, platformId) || null;
+  }
+
+  linkPlatform(playerId, platformType, platformId) {
+    this._stmts.linkPlatform.run(platformType, platformId, Date.now(), playerId);
   }
 
   close() {

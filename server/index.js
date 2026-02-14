@@ -19,17 +19,24 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.wav': 'audio/wav',
+  '.json': 'application/json',
 };
 
 const server = http.createServer((req, res) => {
+  // Parse URL to strip query strings
+  const urlPath = new URL(req.url, `http://${req.headers.host}`).pathname;
+
   let filePath;
-  if (req.url === '/' || req.url === '/index.html') {
+  if (urlPath === '/' || urlPath === '/index.html') {
     filePath = path.join(ROOT, 'client', 'index.html');
-  } else if (req.url === '/shared/constants.js') {
+  } else if (urlPath === '/shared/constants.js') {
     filePath = path.join(ROOT, 'shared', 'constants.js');
+  } else if (urlPath.startsWith('/.well-known/')) {
+    // Serve .well-known files from client/.well-known/
+    filePath = path.join(ROOT, 'client', urlPath);
   } else {
     // Serve from client/
-    filePath = path.join(ROOT, 'client', req.url);
+    filePath = path.join(ROOT, 'client', urlPath);
   }
 
   // Prevent directory traversal — must be under client/ (not just project root)
@@ -43,13 +50,27 @@ const server = http.createServer((req, res) => {
   const ext = path.extname(filePath);
   const contentType = MIME[ext] || 'application/octet-stream';
 
+  // CORS headers for miniapp contexts
+  const headers = {
+    'Content-Type': contentType,
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, headers);
+    res.end();
+    return;
+  }
+
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end('Not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, headers);
     res.end(data);
   });
 });
@@ -73,14 +94,26 @@ wss.on('connection', (ws) => {
     try {
       const msg = JSON.parse(data);
 
-      // First message: check for reconnect token
+      // First message: check for reconnect token and/or platform identity
       if (!initialized) {
         initialized = true;
         clearTimeout(initTimeout);
+
+        // Extract platform info if provided
+        let platformInfo = null;
+        if (msg.platformType && typeof msg.platformType === 'string'
+            && msg.platformId && typeof msg.platformId === 'string') {
+          platformInfo = {
+            platformType: msg.platformType.slice(0, 32),
+            platformId: msg.platformId.slice(0, 256),
+            name: typeof msg.platformName === 'string' ? msg.platformName.slice(0, 64) : null,
+          };
+        }
+
         if (msg.type === 'reconnect' && typeof msg.token === 'string') {
-          playerId = gameServer.addPlayer(ws, msg.token);
+          playerId = gameServer.addPlayer(ws, msg.token, platformInfo);
         } else {
-          playerId = gameServer.addPlayer(ws);
+          playerId = gameServer.addPlayer(ws, null, platformInfo);
           // Process this first message normally too
           if (playerId) gameServer.handleMessage(playerId, msg);
         }

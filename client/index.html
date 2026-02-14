@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>$ROACH Multiplayer</title>
+  <!-- OpenGraph meta for Base App / social sharing -->
+  <meta property="og:title" content="$ROACH - Stomp or Be Stomped">
+  <meta property="og:description" content="Skill-based multiplayer roach survival game. Stomp roaches, earn $ROACH, survive.">
+  <meta property="og:image" content="/assets/og-image.png">
+  <meta property="og:type" content="website">
+  <!-- Farcaster miniapp meta -->
+  <meta name="fc:frame" content="vNext">
+  <meta name="fc:frame:image" content="/assets/og-image.png">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -12,6 +20,11 @@
       font-family: monospace;
       min-height: 100vh;
       overflow-x: hidden;
+      /* Safe area insets for miniapp contexts (notch, nav bars) */
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
     }
     h1 { color: #0f0; margin-bottom: 10px; font-size: 18px; }
 
@@ -1089,76 +1102,6 @@
     #log .death { color: #f00; }
     #log .money { color: #ff0; }
 
-    /* ==================== TUTORIAL MODAL ==================== */
-    #tutorial-overlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.95);
-      z-index: 9999;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-    #tutorial-overlay.visible { display: flex; }
-    #tutorial-content {
-      background: #1a1a1a;
-      border: 3px solid #555;
-      padding: 40px;
-      max-width: 560px;
-      width: 100%;
-      max-height: 90vh;
-      overflow-y: auto;
-      position: relative;
-    }
-    #tutorial-close {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      background: #333;
-      border: 2px solid #666;
-      color: #ddd;
-      font-family: monospace;
-      font-size: 18px;
-      font-weight: bold;
-      width: 40px;
-      height: 40px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
-    }
-    #tutorial-close:hover { background: #444; border-color: #888; }
-    #tutorial-title {
-      color: #0f0;
-      font-family: monospace;
-      font-size: 36px;
-      font-weight: bold;
-      text-align: center;
-      margin-bottom: 40px;
-      text-transform: uppercase;
-      letter-spacing: 3px;
-      text-shadow: 2px 2px 0 #000;
-    }
-    #tutorial-text-col {
-      display: flex;
-      flex-direction: column;
-      gap: 30px;
-    }
-    .tutorial-text {
-      color: #ddd;
-      font-family: monospace;
-      font-size: 16px;
-      line-height: 1.7;
-    }
-    .tutorial-text strong { color: #f0c040; font-weight: bold; }
-    @media (max-width: 640px) {
-      #tutorial-content { padding: 24px; }
-      #tutorial-title { font-size: 24px; margin-bottom: 24px; letter-spacing: 2px; }
-      .tutorial-text { font-size: 14px; }
-    }
-
     /* ==================== PROSPECTOR NPC ==================== */
     #prospector-overlay {
       position: fixed;
@@ -1497,28 +1440,6 @@
               <button class="upgrade-btn" id="upgrade-btn-shellArmor">Buy</button>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tutorial Modal -->
-  <div id="tutorial-overlay">
-    <div id="tutorial-content">
-      <button id="tutorial-close">&times;</button>
-      <div id="tutorial-title">$ROACH SURVIVOR</div>
-
-      <div id="tutorial-text-col">
-        <div class="tutorial-text">
-          You are the <strong>CYAN roach</strong>. Use <strong id="tut-move">WASD</strong> to steer your roach around the grid. Stay alive to earn passive $ROACH, but watch out&mdash;the richer you get, the slower you move!
-        </div>
-
-        <div class="tutorial-text">
-          <strong id="tut-stomp">CLICK</strong> to stomp other roaches and steal their $ROACH. Each roach takes 3 hits to kill, and when they die you get 90% of their wealth. Yellow roaches are the richest targets!
-        </div>
-
-        <div class="tutorial-text">
-          Find the <strong>ROACH MOTEL</strong> (gold room on the minimap) and stay inside for 5 seconds to bank your $ROACH safely. Banked money can't be lost when you die. Now get out there and stomp 'em good!
         </div>
       </div>
     </div>

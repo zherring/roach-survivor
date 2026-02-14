@@ -229,7 +229,42 @@ Files: `shared/constants.js`, `server/db.js`, `server/game-server.js`, `server/r
 
 ---
 
-### M7: Agent API (MoltBots-style) -- NOT STARTED
+### M7: Miniapp Integration -- NOT STARTED
+**Goal:** $ROACH runs as a native miniapp inside Farcaster (Warpcast) and Base App, with platform identity mapped to persistent game sessions. World App support is a stretch goal.
+**Effort:** 1–2 days
+**Blocked by:** Nothing (M1-M6 complete, game is deployed on Railway)
+**Priority:** Farcaster > Base App > World App (stretch)
+
+What to build:
+
+**Core (Farcaster + Base App):**
+1. **Platform detection & adapter** (`client/platform.js`) — lightweight layer that detects which platform is hosting the app, loads the Farcaster SDK via CDN, and exposes a unified interface: `platform.type`, `platform.ready()`, `platform.getUser()`, `platform.getWalletProvider()`. Falls back gracefully to anonymous UUID sessions for standalone play.
+2. **Manifest file** (`client/.well-known/farcaster.json`) — single manifest serves both Farcaster and Base App (they share the same format). Includes app name, icon, splash image, homeUrl, requiredChains.
+3. **Server manifest route** — serve `.well-known/farcaster.json` from `server/index.js` with proper CORS headers.
+4. **Platform identity mapping** — accept optional `platform`/`platformId` fields on WebSocket `reconnect` message. Add `platform_type` and `platform_id` columns to `players` table in `server/db.js`. Platform ID becomes an alternate lookup key for session restore.
+5. **Account linking** — when a platform user connects and has an existing anonymous save slot (localStorage UUID), link the platform identity to that save slot. Once linked, the platform ID replaces the UUID as the session key, giving cross-device persistence for free.
+6. **Viewport fixes** — `viewport-fit=cover`, `env(safe-area-inset-*)` CSS, OpenGraph meta tags for Base App compatibility.
+7. **Asset creation** — `icon-1024.png` (1024×1024), `og-image.png` (1200×630), `splash.png` (200×200) in pixel art style.
+
+**Stretch (World App):**
+8. **World App SDK integration** — `@worldcoin/minikit-js` via jsdelivr CDN. `MiniKit.install()` on load. Identity-only (World ID verification skipped for now).
+9. **World App Dev Portal setup** — manual registration (no code), documented below.
+
+Platform SDK details:
+- **Farcaster**: `@farcaster/miniapp-sdk` via esm.sh CDN. Must call `sdk.actions.ready()` after load. Auth via SIWF / quickAuth. Context provides FID, username, avatar.
+- **Base App**: Uses same `.well-known/farcaster.json` manifest. Auto-detects Farcaster connector in miniapp context. Smart Wallet integration.
+- **World App** (stretch): `@worldcoin/minikit-js` via jsdelivr CDN. `MiniKit.install()` on load. Identity-only for now.
+
+World App Dev Portal setup (stretch):
+1. Register at https://developer.worldcoin.org
+2. Configure app URL (Railway domain), name, icon
+3. Skip World ID verification for now — identity/session mapping only
+
+Files: new `client/platform.js`, new `client/.well-known/farcaster.json`, new assets, modified `server/index.js`, `server/db.js`, `server/game-server.js`, `client/game.js`, `client/index.html`
+
+---
+
+### M8: Agent API (MoltBots-style) -- NOT STARTED
 **Goal:** AI agents can connect and play alongside humans.
 **Effort:** Half day
 **Blocked by:** Nothing (can be done anytime)
@@ -246,10 +281,10 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 
 ---
 
-### M8: Crypto Integration -- NOT STARTED
+### M9: Crypto Integration -- NOT STARTED
 **Goal:** Real $ROACH token economy on Base chain.
 **Effort:** Multiple days, separate workstream
-**Blocked by:** Product/legal rollout decisions and chain-integration scope (core game prerequisites are now in place)
+**Blocked by:** Product/legal rollout decisions and chain-integration scope (core game prerequisites are now in place). M7 exposes wallet providers from each platform.
 
 What to build:
 1. **Vibecoins/Clanker token deployment** — $ROACH on Base
@@ -257,7 +292,7 @@ What to build:
 3. **Withdrawal timelock** — request withdrawal, roach must survive N minutes while pending
 4. **Payment indexer** — watch Base chain for mint/withdraw transactions, credit accounts
 5. **Admin console** — view balances, process manual withdrawals, emergency controls
-6. **Wallet connect** — browser wallet integration for Base
+6. **Wallet connect** — browser wallet integration for Base (leverages M7 wallet provider abstraction)
 
 Files: new `server/indexer.js`, new `server/admin.js`, `client/game.js` (wallet UI), `server/game-server.js` (withdrawal timer logic)
 
@@ -277,10 +312,11 @@ M6 (Upgrades)    -- DONE  -- Persistent progression + bank-first shop + modal st
 
 **The game is fully playable and shareable right now.** Desktop + mobile, sound, tutorial NPC, persistent progression, and upgrade economy are all live. The only manual step is connecting the repo to Railway (or any Node host).
 
-### What's NOT Done (M7-M8)
+### What's NOT Done (M7-M9)
 ```
-M7 (Agents)       -- NOT STARTED  -- Protocol is ready, needs SDK/docs
-M8 (Crypto)       -- NOT STARTED  -- Can proceed now that M6 is complete
+M7 (Miniapps)     -- NOT STARTED  -- Farcaster/Base (primary), World (stretch)
+M8 (Agents)       -- NOT STARTED  -- Protocol is ready, needs SDK/docs
+M9 (Crypto)       -- NOT STARTED  -- Can proceed now that M6 is complete
 ```
 
 ### Bonus Work Completed (not in original milestones)
