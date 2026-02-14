@@ -2,11 +2,11 @@
   "miniapp": {
     "version": "1",
     "name": "$ROACH",
-    "iconUrl": "https://REPLACE_WITH_RAILWAY_DOMAIN/assets/icon-1024.png",
-    "homeUrl": "https://REPLACE_WITH_RAILWAY_DOMAIN/",
-    "imageUrl": "https://REPLACE_WITH_RAILWAY_DOMAIN/assets/og-image.png",
+    "iconUrl": "https://roach-survivor-production.up.railway.app/assets/icon-1024.png",
+    "homeUrl": "https://roach-survivor-production.up.railway.app/",
+    "imageUrl": "https://roach-survivor-production.up.railway.app/assets/og-image.png",
     "buttonTitle": "Play $ROACH",
-    "splashImageUrl": "https://REPLACE_WITH_RAILWAY_DOMAIN/assets/splash.png",
+    "splashImageUrl": "https://roach-survivor-production.up.railway.app/assets/splash.png",
     "splashBackgroundColor": "#1a1a2e",
     "requiredChains": ["eip155:8453"]
   },
