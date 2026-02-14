@@ -108,13 +108,23 @@ export class GameServer {
     console.log(`Game server started: ${GRID_SIZE}x${GRID_SIZE} grid, ${TICK_RATE}ms tick`);
   }
 
-  addPlayer(ws, reconnectToken = null) {
+  addPlayer(ws, reconnectToken = null, platformInfo = null) {
     let token = reconnectToken;
     let name, roomKey, bankedBalance, restored;
     let upgrades = createDefaultUpgrades();
+    let linkedPlatform = null;
 
-    // Try to restore from DB
+    // Try to restore via platform identity first (cross-device persistence)
     let session = null;
+    if (!token && platformInfo && platformInfo.platformType && platformInfo.platformId) {
+      const platformPlayer = db.getPlayerByPlatform(platformInfo.platformType, platformInfo.platformId);
+      if (platformPlayer) {
+        token = platformPlayer.id;
+        console.log(`Player found via platform identity: ${platformInfo.platformType}:${platformInfo.platformId}`);
+      }
+    }
+
+    // Try to restore from DB via token
     if (token) {
       const existing = db.getPlayer(token);
       if (existing) {
@@ -134,6 +144,14 @@ export class GameServer {
         // Validate room exists
         if (!this.rooms.has(roomKey)) roomKey = '1,1';
         restored = !!session;
+
+        // Link platform identity to this player if not already linked
+        if (platformInfo && platformInfo.platformType && platformInfo.platformId && !existing.platform_id) {
+          db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
+          linkedPlatform = platformInfo.platformType;
+          console.log(`Linked ${platformInfo.platformType}:${platformInfo.platformId} to player ${token.slice(0, 8)}...`);
+        }
+
         console.log(`Player reconnecting: ${name} (${token.slice(0, 8)}...)${restored ? ' [session restored]' : ''}`);
       } else {
         token = null; // Invalid token, treat as new
@@ -142,12 +160,20 @@ export class GameServer {
 
     // New player
     if (!token) {
-      name = `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${NOUNS[Math.floor(Math.random() * NOUNS.length)]}`;
+      name = platformInfo?.name ||
+        `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${NOUNS[Math.floor(Math.random() * NOUNS.length)]}`;
       token = db.createPlayer(name);
       roomKey = '1,1';
       bankedBalance = 0;
       restored = false;
       upgrades = createDefaultUpgrades();
+
+      // Link platform identity to new player
+      if (platformInfo && platformInfo.platformType && platformInfo.platformId) {
+        db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
+        linkedPlatform = platformInfo.platformType;
+        console.log(`New player linked to ${platformInfo.platformType}:${platformInfo.platformId}`);
+      }
     }
 
     const room = this.rooms.get(roomKey);
@@ -189,6 +215,7 @@ export class GameServer {
       restored,
       upgrades: { ...upgrades },
       stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
+      linkedPlatform: linkedPlatform || undefined,
     });
 
     console.log(`Player joined: ${name} (${roach.id}) in room ${roomKey}`);

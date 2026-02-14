@@ -1,0 +1,18 @@
+{
+  "miniapp": {
+    "version": "1",
+    "name": "$ROACH",
+    "iconUrl": "https://roach-survivor-production.up.railway.app/assets/icon-1024.png",
+    "homeUrl": "https://roach-survivor-production.up.railway.app/",
+    "imageUrl": "https://roach-survivor-production.up.railway.app/assets/og-image.png",
+    "buttonTitle": "Play $ROACH",
+    "splashImageUrl": "https://roach-survivor-production.up.railway.app/assets/splash.png",
+    "splashBackgroundColor": "#1a1a2e",
+    "requiredChains": ["eip155:8453"]
+  },
+  "accountAssociation": {
+    "header": "REPLACE_AFTER_SIGNING_WITH_WARPCAST_MANIFEST_TOOL",
+    "payload": "REPLACE_AFTER_SIGNING",
+    "signature": "REPLACE_AFTER_SIGNING"
+  }
+}
