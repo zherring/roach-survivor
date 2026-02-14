@@ -415,24 +415,43 @@ function getVisibleStatEl(desktopEl, mobileEl) {
 let ws = null;
 let connected = false;
 let sessionToken = localStorage.getItem('roach_session_token');
-let onboardingToken = null;
-let onboardingSeen = false;
-let onboardingIntroQueued = false;
 
-function getOnboardingStorageKey(token) {
-  return token ? `roach_onboarded_${token}` : null;
+// ==================== TUTORIAL SYSTEM ====================
+// Test anytime: add ?tut=true to URL  (e.g. http://localhost:8080/?tut=true)
+// Reset: clear localStorage key 'roach_tutorial_seen'
+const TUTORIAL_SEEN_KEY = 'roach_tutorial_seen';
+let tutorialSeen = localStorage.getItem(TUTORIAL_SEEN_KEY) === '1';
+
+function markTutorialSeen() {
+  tutorialSeen = true;
+  localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
 }
 
-function loadOnboardingState(token) {
-  onboardingToken = token || null;
-  const key = getOnboardingStorageKey(onboardingToken);
-  onboardingSeen = key ? localStorage.getItem(key) === '1' : false;
+function shouldShowTutorial() {
+  // Always show when ?tut=true is in URL (for testing)
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tut') === 'true') return true;
+  // Otherwise show only on first-ever session
+  return !tutorialSeen;
 }
 
-function markOnboardingSeen() {
-  onboardingSeen = true;
-  const key = getOnboardingStorageKey(onboardingToken);
-  if (key) localStorage.setItem(key, '1');
+function showTutorial() {
+  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  const moveEl = document.getElementById('tut-move');
+  const stompEl = document.getElementById('tut-stomp');
+  if (moveEl) moveEl.textContent = isMobile ? 'the JOYSTICK (bottom left)' : 'WASD';
+  if (stompEl) stompEl.textContent = isMobile ? 'TAP the screen' : 'CLICK';
+
+  const overlay = document.getElementById('tutorial-overlay');
+  if (overlay) overlay.classList.add('visible');
+}
+
+function hideTutorial() {
+  const overlay = document.getElementById('tutorial-overlay');
+  if (overlay) overlay.classList.remove('visible');
+  // Don't mark as seen when using ?tut=true so the param keeps working on reload
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tut') !== 'true') markTutorialSeen();
 }
 
 function connect() {
@@ -482,18 +501,15 @@ function handleMessage(msg) {
         sessionToken = msg.token;
         localStorage.setItem('roach_session_token', msg.token);
       }
-      loadOnboardingState(sessionToken || msg.token || null);
-      if (onboardingSeen) {
-        prospector.done = true;
-        prospector.seenScenes = new Set([1, 2, 3, 4]);
-        prospector.hide();
-      } else {
-        prospector.done = false;
-        if (!onboardingIntroQueued) {
-          onboardingIntroQueued = true;
-          setTimeout(() => prospector.scene1_gameLoad(), 2000);
-        }
+      // Show new full-page tutorial if first visit or ?tut=true
+      if (shouldShowTutorial()) {
+        setTimeout(() => showTutorial(), 1000);
       }
+      // Disable old prospector scene-1 tutorial
+      prospector.done = true;
+      prospector.seenScenes = new Set([1, 2, 3, 4]);
+      prospector.hide();
+
       buildMinimap();
       applySnapshot(msg.snapshot);
       motelData = msg.motel;
@@ -1895,11 +1911,12 @@ const prospector = {
 
   // -- Scene definitions --
 
-  // Scene 1: Game load — close button only
+  // Scene 1: REPLACED by full-page tutorial modal (see showTutorial / hideTutorial)
   scene1_gameLoad() {
+    // Old prospector tutorial disabled — new full-page modal handles onboarding
+    return;
     if (this.seenScenes.has(1)) return;
     this.seenScenes.add(1);
-    markOnboardingSeen();
     this.scene = 1;
     this.playScene([
       "That's it. Stomp 'em good, boys.",
@@ -1980,6 +1997,19 @@ const prospector = {
   }
 };
 
+// ==================== TUTORIAL EVENT LISTENERS ====================
+document.getElementById('tutorial-close')?.addEventListener('click', hideTutorial);
+document.getElementById('tutorial-overlay')?.addEventListener('click', (e) => {
+  if (e.target === document.getElementById('tutorial-overlay')) hideTutorial();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('tutorial-overlay');
+    if (overlay && overlay.classList.contains('visible')) hideTutorial();
+  }
+});
+
+// Prospector NPC listeners (scenes 2-4 still active for in-game hints)
 document.getElementById('btn-close').addEventListener('click', () => prospector.close());
 prospector.overlay?.addEventListener('click', (e) => {
   if (e.target === prospector.closeBtn) return;
@@ -2035,5 +2065,11 @@ applyUpgradeState(upgrades);
 renderUpgradeShop();
 setStoreTab(currentStoreTab, true);
 setBootTransform(0);
+
+// If ?tut=true in URL, show tutorial immediately (don't wait for server welcome)
+if (new URLSearchParams(window.location.search).get('tut') === 'true') {
+  setTimeout(() => showTutorial(), 500);
+}
+
 connect();
 gameLoop();
