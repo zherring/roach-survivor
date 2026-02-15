@@ -25,30 +25,30 @@ class Platform {
   }
 
   async _tryFarcaster() {
-    // Farcaster/Base miniapp context injects signals into the page
-    // Check for the frame context by attempting SDK import
+    // Farcaster/Base miniapp context injects signals into the page.
+    // The SDK always exports actions.ready(), so we can't use that to detect context.
+    // Instead, check sdk.context which is only populated inside a Farcaster client.
     try {
       const mod = await import(FARCASTER_SDK_URL);
       const sdk = mod.default || mod;
 
-      // The SDK exposes a context object when running inside a Farcaster client
-      if (typeof sdk.actions?.ready === 'function') {
-        this.sdk = sdk;
-        this.context = sdk.context || null;
-
-        // Detect Base vs Farcaster by checking the client context
-        // Base App uses the same manifest but its client info differs
-        const clientId = this.context?.client?.clientFid;
-        // Base App typically presents as a Farcaster-compatible client
-        // For now we treat both as 'farcaster' since they share the protocol
-        this.type = 'farcaster';
-
-        // Signal to the host app that we're ready
-        sdk.actions.ready();
-        this._ready = true;
-        console.log(`[platform] Detected Farcaster miniapp context`);
-        return true;
+      // sdk.context is only available when running inside a Farcaster/Base client
+      const context = sdk.context;
+      if (!context || !context.user) {
+        return false; // SDK loaded but we're not in a miniapp context
       }
+
+      this.sdk = sdk;
+      this.context = context;
+      this.type = 'farcaster';
+
+      // Signal to the host app that we're ready
+      if (typeof sdk.actions?.ready === 'function') {
+        sdk.actions.ready();
+      }
+      this._ready = true;
+      console.log(`[platform] Detected Farcaster miniapp context (fid: ${context.user.fid})`);
+      return true;
     } catch (e) {
       // SDK import failed or not in Farcaster context — continue detection
     }
