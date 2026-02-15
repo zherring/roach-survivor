@@ -219,6 +219,16 @@
     #shop-prospector.talking #shop-prospector-face {
       animation: prospector-wiggle-only 0.12s ease-in-out infinite;
     }
+    @keyframes prospector-bob {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    @keyframes prospector-wiggle-only {
+      0%, 100% { transform: rotate(-2.5deg) scale(1); }
+      25% { transform: rotate(1.5deg) scale(1.02); }
+      50% { transform: rotate(3deg) scale(1); }
+      75% { transform: rotate(-1deg) scale(1.01); }
+    }
     #shop-panel {
       background: #111;
       border: 1px solid #444;
