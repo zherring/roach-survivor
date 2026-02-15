@@ -445,6 +445,32 @@ export class GameServer {
       }
     }
 
+    // Build minimap summary every 20 ticks (~1s) — skip empty rooms
+    let minimapData = null;
+    if (this.tickCount % 20 === 0) {
+      minimapData = {};
+      for (const [key, room] of this.rooms) {
+        const roaches = [];
+        for (const r of room.roaches) {
+          if (!r.isDead) {
+            roaches.push({
+              x: Math.round(r.x),
+              y: Math.round(r.y),
+              p: r.isPlayer ? 1 : 0,
+              id: r.isPlayer ? r.id : undefined,
+            });
+          }
+        }
+        const bots = [];
+        for (const b of room.houseBots) {
+          bots.push({ x: Math.round(b.x), y: Math.round(b.y) });
+        }
+        if (roaches.length > 0 || bots.length > 0) {
+          minimapData[key] = { roaches, bots };
+        }
+      }
+    }
+
     // Broadcast tick to all players
     for (const [id, player] of this.players) {
       const room = this.rooms.get(player.room);
@@ -469,7 +495,7 @@ export class GameServer {
         }
       }
 
-      this.send(player.ws, {
+      const tickMsg = {
         type: 'tick',
         tick: this.tickCount,
         room: room.serialize(),
@@ -487,7 +513,11 @@ export class GameServer {
           upgrades: { ...player.upgrades },
           stompCooldown: getStompCooldownForLevel(player.upgrades.rateOfFire),
         },
-      });
+      };
+      if (minimapData) {
+        tickMsg.minimap = minimapData;
+      }
+      this.send(player.ws, tickMsg);
     }
   }
 
