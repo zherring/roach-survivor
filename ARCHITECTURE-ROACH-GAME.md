@@ -244,7 +244,7 @@ What to build:
 4. **Platform identity mapping** — accept optional `platform`/`platformId` fields on WebSocket `reconnect` message. Add `platform_type` and `platform_id` columns to `players` table in `server/db.js`. Platform ID becomes an alternate lookup key for session restore.
 5. **Account linking** — when a platform user connects and has an existing anonymous save slot (localStorage UUID), link the platform identity to that save slot. Once linked, the platform ID replaces the UUID as the session key, giving cross-device persistence for free.
 6. **Viewport fixes** — `viewport-fit=cover`, `env(safe-area-inset-*)` CSS, OpenGraph meta tags for Base App compatibility.
-7. **Asset creation** — `icon-1024.png` (1024×1024), `og-image.png` (1200×630), `splash.png` (200×200) in pixel art style.
+7. **Asset creation** — `icon_1024.png` (1024×1024), `og-image.png` (1200×630), `splash.png` (200×200) in pixel art style.
 
 **Stretch (World App):**
 8. **World App SDK integration** — `@worldcoin/minikit-js` via jsdelivr CDN. `MiniKit.install()` on load. Identity-only (World ID verification skipped for now).

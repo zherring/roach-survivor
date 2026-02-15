@@ -2,7 +2,7 @@
   "miniapp": {
     "version": "1",
     "name": "$ROACH",
-    "iconUrl": "https://roach-survivor-production.up.railway.app/assets/icon-1024.png",
+    "iconUrl": "https://roach-survivor-production.up.railway.app/assets/icon_1024.png",
     "homeUrl": "https://roach-survivor-production.up.railway.app/",
     "imageUrl": "https://roach-survivor-production.up.railway.app/assets/og-image.png",
     "buttonTitle": "Play $ROACH",
