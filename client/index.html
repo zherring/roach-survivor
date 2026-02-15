@@ -1102,100 +1102,55 @@
     #log .death { color: #f00; }
     #log .money { color: #ff0; }
 
-    /* ==================== PROSPECTOR NPC ==================== */
-    #prospector-overlay {
+    /* ==================== TUTORIAL OVERLAY ==================== */
+    #tutorial-overlay {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.8);
       z-index: 9998;
       display: none;
       align-items: center;
       justify-content: center;
-      flex-direction: column;
     }
-    #prospector-overlay.visible {
+    #tutorial-overlay.visible {
       display: flex;
     }
-    #prospector-inner {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+    #tutorial-inner {
+      background: #1a1a1a;
+      border: 2px solid #555;
       max-width: 420px;
       width: 90%;
-    }
-    #prospector-face {
-      width: 220px;
-      height: 220px;
-      image-rendering: pixelated;
-      flex-shrink: 0;
-    }
-    #prospector-face.talking {
-      animation: prospector-bob 0.3s ease-in-out infinite, prospector-wiggle 0.15s ease-in-out infinite;
-    }
-    @keyframes prospector-bob {
-      0%, 100% { transform: translateY(0) rotate(0deg); }
-      50% { transform: translateY(-6px) rotate(0deg); }
-    }
-    @keyframes prospector-wiggle {
-      0%, 100% { transform: translateY(var(--bob-y, 0)) rotate(-2deg); }
-      50% { transform: translateY(var(--bob-y, 0)) rotate(2deg); }
-    }
-    /* Combined animation using a wrapper for bob + wiggle */
-    #prospector-face-wrap {
-      display: flex;
-      justify-content: center;
-    }
-    #prospector-face-wrap.talking {
-      animation: prospector-bob 0.35s ease-in-out infinite;
-    }
-    #prospector-face-wrap.talking #prospector-face {
-      animation: prospector-wiggle-only 0.12s ease-in-out infinite;
-    }
-    @keyframes prospector-wiggle-only {
-      0%, 100% { transform: rotate(-2.5deg) scale(1); }
-      25% { transform: rotate(1.5deg) scale(1.02); }
-      50% { transform: rotate(3deg) scale(1); }
-      75% { transform: rotate(-1deg) scale(1.01); }
-    }
-    #prospector-balloon {
-      background: #f5f0d0;
-      border: 3px solid #555;
-      padding: 14px 18px;
-      margin-top: -10px;
-      width: 100%;
+      padding: 24px;
       font-family: monospace;
-      font-size: 15px;
-      color: #222;
-      line-height: 1.5;
-      text-align: center;
-      min-height: 60px;
+      font-size: 14px;
+      color: #ccc;
+      line-height: 1.6;
     }
-    #prospector-buttons {
-      display: flex;
-      gap: 12px;
-      margin-top: 10px;
+    #tutorial-inner p {
+      margin: 0 0 16px 0;
+    }
+    #tutorial-inner p:last-of-type {
+      margin-bottom: 20px;
+    }
+    #tutorial-inner strong {
+      color: #ff0;
+    }
+    #btn-close-tutorial {
+      display: block;
       width: 100%;
-    }
-    #prospector-buttons button {
-      flex: 1;
-      padding: 10px 16px;
+      padding: 10px;
       font-family: monospace;
       font-size: 14px;
       font-weight: bold;
       cursor: pointer;
-      border: 2px solid;
-    }
-    #btn-close {
       background: #2a2a2a;
-      border-color: #666;
+      border: 2px solid #666;
       color: #ccc;
     }
-    #btn-close:hover { background: #3a3a3a; }
+    #btn-close-tutorial:hover { background: #3a3a3a; }
 
     @media (max-width: 640px) {
-      #prospector-face { width: 200px; height: 200px; }
-      #prospector-balloon { font-size: 13px; padding: 12px 14px; }
-      #prospector-buttons button { font-size: 13px; padding: 12px 10px; }
+      #tutorial-inner { font-size: 13px; padding: 18px; }
     }
 
     /* ==================== HEAL AFFORDANCE ==================== */
@@ -1445,18 +1400,13 @@
     </div>
   </div>
 
-  <!-- Prospector NPC -->
-  <div id="prospector-overlay">
-    <div id="prospector-inner">
-      <div id="prospector-face-wrap">
-        <img id="prospector-face" src="assets/prospector-closed.png" alt="Prospector">
-      </div>
-      <div id="prospector-balloon">
-        <div id="prospector-text"></div>
-      </div>
-      <div id="prospector-buttons">
-        <button id="btn-close">[Close]</button>
-      </div>
+  <!-- Tutorial overlay -->
+  <div id="tutorial-overlay">
+    <div id="tutorial-inner">
+      <p><strong>The Roach:</strong> You control a cockroach. Move with WASD or the on-screen joystick. Stay alive as long as you can — if you get stomped, you lose most of your $ROACH.</p>
+      <p><strong>The Boot:</strong> Click or tap to stomp other roaches and steal their $ROACH. Watch out for the red house bot boots — they hunt the richest roaches in each room.</p>
+      <p><strong>Spending $ROACH:</strong> $ROACH is distributed every week. Open the store to buy upgrades like bigger boots, faster stomps, and shell armor to earn even more $ROACH.</p>
+      <button id="btn-close-tutorial">Got it</button>
     </div>
   </div>
 
