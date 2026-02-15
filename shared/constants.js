@@ -22,7 +22,7 @@ export const KILL_REWARD = 0.9; // gain 90% of victim's balance
 export const INCOME_RATE = 0.01; // $0.01 per second per roach
 export const MAX_ROACHES_PER_ROOM = 10;
 
-export const PLAYER_BASE_SPEED = 2.5;
+export const PLAYER_BASE_SPEED = 3.125;
 export const NPC_BASE_SPEED = 3;
 export const WEALTH_SPEED_PENALTY_MAX = 1.5;
 export const WEALTH_SPEED_PENALTY_RATE = 0.08;
