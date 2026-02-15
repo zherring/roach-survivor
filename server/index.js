@@ -34,22 +34,15 @@ const server = http.createServer((req, res) => {
   } else if (urlPath.startsWith('/.well-known/')) {
     // Serve .well-known files from client/.well-known/
     filePath = path.join(ROOT, 'client', urlPath);
-  } else if (urlPath.startsWith('/assets/')) {
-    // Serve from project-root assets/ (images, icons, etc.)
-    filePath = path.join(ROOT, urlPath);
   } else {
     // Serve from client/
     filePath = path.join(ROOT, 'client', urlPath);
   }
 
-  // Prevent directory traversal — must be under allowed directories
+  // Prevent directory traversal — must be under client/ or shared/constants.js
   const CLIENT_DIR = path.join(ROOT, 'client');
-  const ASSETS_DIR = path.join(ROOT, 'assets');
   const SHARED_FILE = path.join(ROOT, 'shared', 'constants.js');
-  const isAllowed = filePath.startsWith(CLIENT_DIR + path.sep)
-    || filePath.startsWith(ASSETS_DIR + path.sep)
-    || filePath === SHARED_FILE;
-  if (!isAllowed) {
+  if (!filePath.startsWith(CLIENT_DIR + path.sep) && filePath !== SHARED_FILE) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
