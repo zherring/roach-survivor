@@ -494,16 +494,9 @@ function handleMessage(msg) {
         localStorage.setItem('roach_session_token', msg.token);
       }
       loadOnboardingState(sessionToken || msg.token || null);
-      if (onboardingSeen) {
-        prospector.done = true;
-        prospector.seenScenes = new Set([1, 2, 3, 4]);
-        prospector.hide();
-      } else {
-        prospector.done = false;
-        if (!onboardingIntroQueued) {
-          onboardingIntroQueued = true;
-          setTimeout(() => prospector.scene1_gameLoad(), 2000);
-        }
+      if (!onboardingSeen && !onboardingIntroQueued) {
+        onboardingIntroQueued = true;
+        setTimeout(() => showTutorial(), 2000);
       }
       buildMinimap();
       applySnapshot(msg.snapshot);
@@ -536,7 +529,7 @@ function handleMessage(msg) {
       motelData = msg.motel;
       AudioManager.play('synth', 0.3);
       log(`Crawled to room ${msg.room}`);
-      prospector.onRoomChange(msg.room);
+
       break;
     case 'upgrade_purchased': {
       const def = UPGRADE_DEFS[msg.upgrade];
@@ -647,16 +640,9 @@ function handleTick(msg) {
   if (msg.events) {
     for (const evt of msg.events) {
       handleEvent(evt);
-      prospector.onGameEvent(evt);
     }
   }
 
-  // Prospector passive checks — once per second (every 20 ticks at 50ms)
-  prospectorTickCount++;
-  if (prospectorTickCount >= 20) {
-    prospectorTickCount = 0;
-    prospector.checkPassive();
-  }
 
   // Update other players' boot cursors
   const seenCursorIds = new Set();
@@ -1903,272 +1889,19 @@ container.addEventListener('touchend', () => {
 });
 
 // ==================== PROSPECTOR NPC ====================
-let prospectorTickCount = 0;
-const prospector = {
-  overlay: document.getElementById('prospector-overlay'),
-  faceWrap: document.getElementById('prospector-face-wrap'),
-  face: document.getElementById('prospector-face'),
-  textEl: document.getElementById('prospector-text'),
-  closeBtn: document.getElementById('btn-close'),
-  lines: [],       // lines in current scene, typed sequentially
-  lineIndex: 0,
-  typing: false,
-  visible: false,
-  done: false,      // all 4 scenes complete
-  talkTimer: null,
-  charIndex: 0,
-  currentText: '',
-  autoHideTimer: null,
-  scene: 0,         // which scene we're on (0 = not started)
-  seenScenes: new Set(),
-  sceneRunId: 0,
-  sceneFinished: false,
-  awaitingCloseClick: false,
+// ==================== TUTORIAL OVERLAY ====================
+const tutorialOverlay = document.getElementById('tutorial-overlay');
 
-  // -- Core display methods --
+function showTutorial() {
+  tutorialOverlay.classList.add('visible');
+}
 
-  show() {
-    this.visible = true;
-    this.overlay.classList.add('visible');
-  },
+function hideTutorial() {
+  tutorialOverlay.classList.remove('visible');
+  markOnboardingSeen();
+}
 
-  _typeLine(text, onDone, runId) {
-    if (runId !== this.sceneRunId || !this.visible) return;
-    this.currentText = text;
-    this.charIndex = 0;
-    this.textEl.textContent = '';
-    this.typing = true;
-    this.startTalking();
-    this._typeNext(onDone, runId);
-  },
-
-  _typeNext(onDone, runId) {
-    if (!this.visible || runId !== this.sceneRunId) return;
-    if (this.charIndex < this.currentText.length) {
-      this.charIndex++;
-      this.textEl.textContent = this.currentText.slice(0, this.charIndex);
-      setTimeout(() => this._typeNext(onDone, runId), 25 + Math.random() * 20);
-    } else {
-      this.typing = false;
-      this.stopTalking();
-      if (onDone) onDone();
-    }
-  },
-
-  startTalking() {
-    this.face.src = 'assets/prospector-speaking.png';
-    this.faceWrap.classList.add('talking');
-    if (this.talkTimer) clearInterval(this.talkTimer);
-    let mouthOpen = true;
-    this.talkTimer = setInterval(() => {
-      mouthOpen = !mouthOpen;
-      this.face.src = mouthOpen ? 'assets/prospector-speaking.png' : 'assets/prospector-closed.png';
-    }, 120);
-  },
-
-  stopTalking() {
-    if (this.talkTimer) { clearInterval(this.talkTimer); this.talkTimer = null; }
-    this.face.src = 'assets/prospector-closed.png';
-    this.faceWrap.classList.remove('talking');
-  },
-
-  hide() {
-    this.visible = false;
-    this.overlay.classList.remove('visible');
-    this.stopTalking();
-    this.typing = false;
-    this.lines = [];
-    this.lineIndex = 0;
-    if (this.autoHideTimer) { clearTimeout(this.autoHideTimer); this.autoHideTimer = null; }
-    this.sceneRunId++;
-    this.sceneFinished = false;
-    this.awaitingCloseClick = false;
-    this.closeBtn.textContent = '[Close]';
-  },
-
-  close() {
-    this.hide();
-  },
-
-  // -- Scene system: play a sequence of lines with delays --
-
-  playScene(lines, opts = {}) {
-    if (this.done) return;
-    const { showClose = false, autoHide = false, autoHideDelay = 2000 } = opts;
-    this.sceneRunId++;
-    const runId = this.sceneRunId;
-    this.lines = lines;
-    this.lineIndex = 0;
-    this.sceneFinished = false;
-    this.awaitingCloseClick = false;
-    this.closeBtn.textContent = '[Close]';
-    this.closeBtn.style.display = showClose ? '' : 'none';
-    this.show();
-    this._playNextLine(autoHide, autoHideDelay, runId);
-  },
-
-  _playNextLine(autoHide, autoHideDelay, runId) {
-    if (!this.visible || runId !== this.sceneRunId) return;
-    if (this.lineIndex >= this.lines.length) {
-      // All lines done
-      this.sceneFinished = true;
-      if (autoHide) {
-        this.autoHideTimer = setTimeout(() => {
-          if (runId === this.sceneRunId) this.hide();
-        }, autoHideDelay);
-      }
-      return;
-    }
-
-    const entry = this.lines[this.lineIndex];
-    this.lineIndex++;
-
-    if (typeof entry === 'number') {
-      // It's a delay (beat) in ms
-      setTimeout(() => this._playNextLine(autoHide, autoHideDelay, runId), entry);
-    } else {
-      // It's a text line
-      this._typeLine(entry, () => {
-        if (!this.visible || runId !== this.sceneRunId) return;
-        // Small pause after each line before next
-        if (this.lineIndex < this.lines.length) {
-          setTimeout(() => this._playNextLine(autoHide, autoHideDelay, runId), 600);
-        } else {
-          this._playNextLine(autoHide, autoHideDelay, runId);
-        }
-      }, runId);
-    }
-  },
-
-  _getFinalLine() {
-    for (let i = this.lines.length - 1; i >= 0; i--) {
-      if (typeof this.lines[i] === 'string') return this.lines[i];
-    }
-    return '';
-  },
-
-  skipToEnd() {
-    if (!this.visible) return;
-    this.sceneRunId++;
-    this.typing = false;
-    this.stopTalking();
-    if (this.autoHideTimer) {
-      clearTimeout(this.autoHideTimer);
-      this.autoHideTimer = null;
-    }
-    this.lineIndex = this.lines.length;
-    this.sceneFinished = true;
-    this.awaitingCloseClick = true;
-    const finalLine = this._getFinalLine();
-    if (finalLine) this.textEl.textContent = finalLine;
-    this.closeBtn.style.display = '';
-  },
-
-  stepOrClose() {
-    if (!this.visible) return;
-    if (this.awaitingCloseClick) {
-      this.close();
-      return;
-    }
-    if (this.typing || !this.sceneFinished) {
-      this.skipToEnd();
-      return;
-    }
-    this.close();
-  },
-
-  // -- Scene definitions --
-
-  // Scene 1: Game load — close button only
-  scene1_gameLoad() {
-    if (this.seenScenes.has(1)) return;
-    this.seenScenes.add(1);
-    markOnboardingSeen();
-    this.scene = 1;
-    this.playScene([
-      "That's it. Stomp 'em good, boys.",
-      800,
-      "There's gold in them there cockroaches.",
-    ], { showClose: true });
-  },
-
-  // Scene 2: First kill — auto-dismiss
-  scene2_firstKill() {
-    if (this.seenScenes.has(2)) return;
-    this.seenScenes.add(2);
-    this.scene = 2;
-    this.playScene([
-      "\u2026",
-      1200,
-      "Hoo-wee.",
-      1000,
-      "We got ourselves a real roach stomper here.",
-      800,
-      "Stomp more of 'em, boy.",
-    ], { autoHide: true, autoHideDelay: 2500 });
-  },
-
-  // Scene 3: Growth threshold — auto-dismiss
-  scene3_growth() {
-    if (this.seenScenes.has(3)) return;
-    this.seenScenes.add(3);
-    this.scene = 3;
-    this.playScene([
-      "Man\u2026",
-      800,
-      "I bet that roach of yours is gettin' awfully fat.",
-      1200,
-      "Be a shame if someone else came along and stomped him.",
-    ], { autoHide: true, autoHideDelay: 3000 });
-  },
-
-  // Scene 4: Motel discovery — auto-dismiss
-  scene4_motel() {
-    if (this.seenScenes.has(4)) return;
-    this.seenScenes.add(4);
-    this.scene = 4;
-    this.done = true; // last scene
-    this.playScene([
-      "Oh boy\u2026 I bet you bank all that gold your roach has saved up if you hide in the Roach Motel.",
-    ], { autoHide: true, autoHideDelay: 4000 });
-  },
-
-  // -- Event hooks (called from game loop) --
-
-  onGameEvent(evt) {
-    if (this.done) return;
-    // Scene 2: first kill
-    if (evt.type === 'stomp_kill' && evt.stomperId === myId) {
-      // Small delay so kill VFX lands first
-      setTimeout(() => this.scene2_firstKill(), 400);
-    }
-  },
-
-  checkPassive() {
-    if (this.done || !myId) return;
-
-    // Scene 3: growth threshold (balance > 5 means visible size increase)
-    if (balance > 5 && !this.seenScenes.has(3) && this.seenScenes.has(2)) {
-      this.scene3_growth();
-    }
-
-    // Scene 4: motel discovery (player in same room as active motel)
-    if (motelData && motelData.active && motelData.room === currentRoom
-        && !this.seenScenes.has(4) && this.seenScenes.has(3)) {
-      this.scene4_motel();
-    }
-  },
-
-  onRoomChange() {
-    // No scene for room change in new tutorial
-  }
-};
-
-document.getElementById('btn-close').addEventListener('click', () => prospector.close());
-prospector.overlay?.addEventListener('click', (e) => {
-  if (e.target === prospector.closeBtn) return;
-  prospector.stepOrClose();
-});
+document.getElementById('btn-close-tutorial').addEventListener('click', hideTutorial);
 
 // ==================== MUTE BUTTON ====================
 const muteBtn = document.getElementById('mute-btn');
