@@ -221,3 +221,194 @@ This is ~10 lines in `game-server.js`.
 4. Run 5 bots simultaneously — they compete with each other and house bots
 5. Check that bots accumulate balance, get killed, respawn, navigate rooms
 6. (Phase 2) Run LLM-powered agent — watch it make strategic decisions
+
+---
+
+## Deep Implementation Plan (M8) — Constraints, Strategy, and Best Path Forward
+
+This section expands the milestone into an implementation-ready plan that accounts for real-world LLM constraints (especially latency and token cost) and supports both deterministic bots and LLM-directed bots.
+
+### 1) Constraint Research Summary (What MoltBot-style systems run into)
+
+Across API-driven game agents, the practical constraints are usually:
+
+1. **Decision latency dominates**
+   - Local game ticks are fast (here: every 50ms), but LLM round-trips are slow (typically ~400ms to 3000ms depending on model + load).
+   - If you call an LLM per tick, the bot is effectively frozen while the world moves.
+
+2. **Token bandwidth is finite**
+   - Full state every 50ms is too expensive to repeatedly serialize to LLMs.
+   - Agents need compressed observations (local neighborhood + important deltas + recent events).
+
+3. **Action cadence mismatch**
+   - Game expects high-frequency movement updates.
+   - LLMs produce low-frequency strategic intents.
+   - You need an intermediate controller to convert intent -> continuous control.
+
+4. **Non-deterministic output and formatting errors**
+   - Free-form LLM responses can violate schemas or issue impossible actions.
+   - Strict tool calling and server-side validation are mandatory.
+
+5. **Burst concurrency costs**
+   - Running many LLM bots simultaneously can explode cost and API QPS.
+   - Need model tiering, budgets, and graceful fallback to rule policies.
+
+6. **Partial observability-by-budget (not by protocol)**
+   - Protocol provides full room state, but for LLM scale you must intentionally redact/summarize.
+
+### 2) Architectural Implication: Two-Layer Bot Brain
+
+To handle latency while staying competitive, each bot should have:
+
+- **Layer A: Real-time Controller (deterministic, 20 TPS)**
+  - Maintains local world model.
+  - Executes movement, spacing, stomp windows, flee vectors.
+  - Always active even when LLM is unavailable.
+
+- **Layer B: Strategic Planner (LLM or rule planner, 1-2 Hz)**
+  - Chooses high-level mode: `farm`, `hunt_player`, `bank_run`, `evade`, `heal_reset`, `room_rotate`.
+  - Emits policy parameters (risk tolerance, target priority, disengage threshold).
+
+This decoupling is the key to making LLM bots viable.
+
+### 3) Recommended Bot Portfolio ("five LLMs + archetypes")
+
+Target a mixed ecology instead of all bots using the same expensive model:
+
+1. **Scout/Farmer Archetype**
+   - Objective: stable income, low risk, frequent banking.
+   - Model: small/fast model (or pure rules).
+
+2. **Opportunist Hunter Archetype**
+   - Objective: punish weak/high-balance targets.
+   - Model: medium model with tactical reasoning.
+
+3. **Tank/Survival Archetype**
+   - Objective: minimize deaths, heal early, avoid bot clusters.
+   - Model: small/medium.
+
+4. **Disruptor Archetype**
+   - Objective: deny banks, contest motel timing, room pressure.
+   - Model: medium/high.
+
+5. **Meta-Adaptive Captain Archetype**
+   - Objective: dynamic strategy switching based on lobby state.
+   - Model: highest-quality model, lowest bot count.
+
+Important: these can map to five model tiers OR a single model with five system prompts. Start with prompt variants first; add multi-model routing once metrics are live.
+
+### 4) Hard Parts and Design Considerations
+
+1. **Latency-safe control**
+   - Requirement: bot remains active with no LLM response for several seconds.
+   - Solution: "last good plan" + deterministic fallback FSM + timeout downgrade.
+
+2. **Observation compression**
+   - Build per-bot feature vector + short textual summary:
+     - nearest 3 threats, nearest 5 prey, motel status, own hp/balance/banked, recent damage/kills.
+   - Include deltas since last planner call, not full snapshots.
+
+3. **Intent compiler**
+   - Convert planner outputs into executable control fields:
+     - `mode`, `targetId/targetPos`, `riskBudget`, `stompAggression`, `bankThreshold`, `retreatHp`.
+
+4. **Action legality and anti-cheat parity**
+   - Bot actions must go through same server constraints as humans.
+   - No privileged endpoints for LLM bots.
+
+5. **Evaluation harness**
+   - Need reproducible bot-vs-bot tournaments to compare strategies.
+   - Metrics: banked/minute, survival time, K/D, motel conversion %, API cost per 10 minutes.
+
+6. **Cost governance**
+   - Per-bot and per-match token budgets.
+   - Soft cap -> reduce planner frequency.
+   - Hard cap -> degrade to deterministic policy.
+
+7. **Failure handling**
+   - LLM timeout, malformed tool output, provider outage, rate-limit spikes.
+   - Must never crash match loop.
+
+### 5) Optimal Implementation Path (recommended)
+
+#### Phase A — Deterministic Bot Runtime First (foundation, 1-2 days)
+- Build `agent/runtime/` with:
+  - world-state cache
+  - utility scoring (farm/hunt/bank/evade)
+  - continuous movement + stomp windowing
+- Ship 3 non-LLM archetypes to validate game balance and API shape.
+
+#### Phase B — Planner Interface + Offline Replay (1 day)
+- Define planner contract (`decide(observation) -> intent`).
+- Add replay runner that feeds recorded ticks and scores outcomes.
+- Validate archetypes offline before live deployment.
+
+#### Phase C — LLM Bridge with Strict Tool Schema (1 day)
+- Add `agent/llm-bridge.js`:
+  - planner loop every 500-1000ms
+  - JSON schema/tool call only
+  - retry-once then fallback
+- Start with 1-2 LLM bots max in live rooms.
+
+#### Phase D — Multi-Archetype League + Budgets (1 day)
+- Run 5 archetypes concurrently (mixed LLM/rules).
+- Add budget manager and adaptive cadence.
+- Collect telemetry dashboard for cost/performance.
+
+#### Phase E — Milestone Closeout (0.5 day)
+- Publish `agent/SKILL.md`, examples, and benchmark report.
+- Add server-side agent tagging + leaderboard split (human vs agent).
+
+### 6) Planner Cadence Recommendations (LLM latency aware)
+
+- **Default:** planner at 2 Hz (every 500ms).
+- **Under load:** drop to 1 Hz (1000ms).
+- **Critical moments only:** trigger immediate re-plan when:
+  - hp changed,
+  - entered/leaving motel radius,
+  - new high-value threat within danger radius,
+  - room transition.
+
+This event-driven bump avoids constant high-frequency LLM calls while preserving responsiveness.
+
+### 7) Minimal Data Contract for LLM Planner
+
+Use compact structured JSON (not raw full tick):
+
+- `self`: hp, balance, banked, pos, velocity, cooldowns
+- `threats[]`: id, dist, bearing, dangerScore
+- `prey[]`: id, dist, expectedReward, hp
+- `motel`: active, roomDelta, eta, contestLevel
+- `recentEvents`: damageTaken, kills, bankInterrupts
+- `policyMemory`: lastMode, lastTarget, stuckCounter
+
+Return only:
+- `mode`
+- `target`
+- `risk`
+- optional `notes`
+
+Controller handles actual `input/stomp/heal` emission.
+
+### 8) Milestone Acceptance Criteria (updated)
+
+M8 should be considered complete when:
+
+1. At least **3 deterministic archetype bots** can run 24/7 without LLM.
+2. At least **2 LLM-guided archetypes** run with timeout fallback and no loop instability.
+3. A **5-archetype mixed match** runs for 30+ minutes with telemetry.
+4. Budget controls cap LLM spend and auto-downgrade correctly.
+5. Documentation includes SKILL + strategy profiles + benchmarking process.
+
+### 9) Best Path Forward (final recommendation)
+
+**Do not start with five always-on LLM bots.**
+Start with deterministic controllers and a planner abstraction, then layer in LLMs as sparse strategic supervisors.
+
+This gives:
+- Low-latency play quality,
+- Controlled API cost,
+- Easier debugging,
+- Better competitive behavior under real production constraints.
+
+In short: **rules for reflexes, LLMs for strategy** is the optimal architecture for MoltBots-style play in $ROACH.
