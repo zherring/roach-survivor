@@ -170,7 +170,7 @@ function updateScale() {
   wrapper.style.width = (CONTAINER_WIDTH * scaleFactor) + 'px';
   wrapper.style.height = (CONTAINER_HEIGHT * scaleFactor) + 'px';
 }
-window.addEventListener('resize', updateScale);
+window.addEventListener('resize', () => { updateScale(); resizeMinimapCanvases(); });
 updateScale();
 const playerArrow = document.getElementById('player-arrow');
 const motelEl = document.getElementById('roach-motel');
@@ -626,6 +626,11 @@ function handleTick(msg) {
     }
   }
 
+  // Minimap
+  if (msg.minimap) {
+    minimapData = msg.minimap;
+  }
+
   // Motel
   motelData = msg.motel;
   motelProgress = msg.motelProgress || 0;
@@ -996,6 +1001,13 @@ function render() {
     savingCountdownEl = null;
     lastCountdownNum = 0;
   }
+
+  // Radar minimap — render at 60fps for smooth sweep
+  if (window.innerWidth <= 640) {
+    renderMinimap(document.getElementById('mobile-minimap-canvas'));
+  } else {
+    renderMinimap(document.getElementById('minimap-canvas'));
+  }
 }
 
 // ==================== MOTEL DISPLAY ====================
@@ -1089,17 +1101,6 @@ function updateUI() {
     const mHealBtn = document.getElementById('mobile-heal-btn');
     if (mHealBtn) mHealBtn.disabled = healDisabled;
   }
-
-  // Minimap (desktop + mobile)
-  const motelRoom = motelData && motelData.active ? motelData.room : null;
-  document.querySelectorAll('.room-cell').forEach(cell => {
-    cell.classList.toggle('active', cell.dataset.room === currentRoom);
-    cell.classList.toggle('motel', cell.dataset.room === motelRoom);
-  });
-  document.querySelectorAll('.mm-cell').forEach(cell => {
-    cell.classList.toggle('active', cell.dataset.room === currentRoom);
-    cell.classList.toggle('motel', cell.dataset.room === motelRoom);
-  });
 
   // Player count
   let playerCount = 0;
@@ -1479,32 +1480,201 @@ function showCoinShower(x, y, reward) {
   }
 }
 
+// Minimap state
+let minimapData = null; // { 'x,y': { roaches: [{x,y,p,id},...], bots: [{x,y},...] }, ... }
+const RADAR_PERIOD = 3000; // ms for one full sweep
+
 function buildMinimap() {
-  // Desktop minimap
-  const grid = document.getElementById('room-grid');
-  grid.innerHTML = '';
-  grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
-  for (let y = 0; y < gridSize; y++) {
-    for (let x = 0; x < gridSize; x++) {
-      const cell = document.createElement('div');
-      cell.className = 'room-cell';
-      cell.dataset.room = `${x},${y}`;
-      cell.innerHTML = `${x},${y} <span class="bot-indicator"></span><br><div class="wealth-bar"><div class="wealth-fill"></div></div>`;
-      grid.appendChild(cell);
+  resizeMinimapCanvases();
+  // Retry after layout settles (covers cases where parent has no width yet)
+  requestAnimationFrame(() => resizeMinimapCanvases());
+}
+
+function resizeMinimapCanvases() {
+  // Desktop minimap — match sidebar width
+  const desktopCanvas = document.getElementById('minimap-canvas');
+  if (desktopCanvas) {
+    const parent = desktopCanvas.parentElement;
+    if (parent && parent.clientWidth > 0) {
+      const w = Math.min(parent.clientWidth, 220);
+      const cellW = Math.floor(w / gridSize);
+      const cellH = Math.floor(cellW * (2 / 3));
+      desktopCanvas.width = cellW * gridSize;
+      desktopCanvas.height = cellH * gridSize;
     }
   }
 
   // Mobile minimap
-  const mm = document.getElementById('mobile-minimap');
-  if (mm) {
-    mm.innerHTML = '';
-    mm.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        const cell = document.createElement('div');
-        cell.className = 'mm-cell';
-        cell.dataset.room = `${x},${y}`;
-        mm.appendChild(cell);
+  const mobileCanvas = document.getElementById('mobile-minimap-canvas');
+  if (mobileCanvas) {
+    const parent = mobileCanvas.parentElement;
+    if (parent && parent.clientWidth > 0) {
+      const w = parent.clientWidth;
+      const cellW = Math.floor(w / gridSize);
+      const cellH = Math.floor(cellW * (2 / 3));
+      mobileCanvas.width = cellW * gridSize;
+      mobileCanvas.height = cellH * gridSize;
+    }
+  }
+}
+
+// Returns 0..1 brightness based on how recently the sweep passed this angle
+function radarBrightness(entityAngle, sweepAngle) {
+  let diff = sweepAngle - entityAngle;
+  // Normalize to 0..2PI (how far behind the sweep the entity is)
+  diff = ((diff % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  // Entities just swept = diff near 0, fading trail behind
+  if (diff < Math.PI * 0.8) {
+    return 1 - diff / (Math.PI * 0.8);
+  }
+  return 0;
+}
+
+function renderMinimap(canvas) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const cellW = Math.floor(w / gridSize);
+  const cellH = Math.floor(h / gridSize);
+  const gap = 1;
+
+  const now = Date.now();
+  const sweepAngle = ((now % RADAR_PERIOD) / RADAR_PERIOD) * Math.PI * 2;
+
+  // Dark background
+  ctx.fillStyle = '#0a0f0a';
+  ctx.fillRect(0, 0, w, h);
+
+  const motelRoom = motelData && motelData.active ? motelData.room : null;
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxRadius = Math.sqrt(cx * cx + cy * cy);
+
+  // Radar sweep cone (drawn over the whole minimap)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  // Draw sweep as a filled arc trailing behind the line
+  const trailAngle = Math.PI * 0.4;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, maxRadius, sweepAngle - trailAngle, sweepAngle);
+  ctx.closePath();
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxRadius);
+  grad.addColorStop(0, 'rgba(0, 255, 0, 0.12)');
+  grad.addColorStop(0.5, 'rgba(0, 255, 0, 0.06)');
+  grad.addColorStop(1, 'rgba(0, 255, 0, 0.02)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.restore();
+
+  // Sweep line
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(sweepAngle) * maxRadius, cy + Math.sin(sweepAngle) * maxRadius);
+  ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Draw grid and entities
+  for (let gy = 0; gy < gridSize; gy++) {
+    for (let gx = 0; gx < gridSize; gx++) {
+      const roomKey = `${gx},${gy}`;
+      const x0 = gx * cellW + gap;
+      const y0 = gy * cellH + gap;
+      const cw = cellW - gap * 2;
+      const ch = cellH - gap * 2;
+
+      // Room border
+      if (roomKey === currentRoom) {
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)';
+      } else if (roomKey === motelRoom) {
+        ctx.strokeStyle = 'rgba(240, 192, 64, 0.4)';
+      } else {
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.15)';
+      }
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, cw - 1, ch - 1);
+
+      // Crosshair in center of each cell
+      const cellCx = x0 + cw / 2;
+      const cellCy = y0 + ch / 2;
+      ctx.strokeStyle = 'rgba(0, 255, 0, 0.07)';
+      ctx.beginPath();
+      ctx.moveTo(cellCx, y0 + 2);
+      ctx.lineTo(cellCx, y0 + ch - 2);
+      ctx.moveTo(x0 + 2, cellCy);
+      ctx.lineTo(x0 + cw - 2, cellCy);
+      ctx.stroke();
+
+      // Draw entities from minimap data
+      if (minimapData && minimapData[roomKey]) {
+        const room = minimapData[roomKey];
+        const scaleX = cw / CONTAINER_WIDTH;
+        const scaleY = ch / CONTAINER_HEIGHT;
+
+        // AI roaches - green radar blips
+        for (const r of room.roaches) {
+          if (r.p) continue;
+          const rx = x0 + r.x * scaleX;
+          const ry = y0 + r.y * scaleY;
+          const angle = Math.atan2(ry - cy, rx - cx);
+          const b = radarBrightness(angle, sweepAngle);
+          if (b > 0.05) {
+            const alpha = (0.3 + b * 0.7).toFixed(2);
+            ctx.fillStyle = `rgba(0, 200, 0, ${alpha})`;
+            ctx.fillRect(rx - 1, ry - 1, 2, 2);
+          }
+        }
+
+        // Bots - red blips
+        for (const bot of room.bots) {
+          const bx = x0 + bot.x * scaleX;
+          const by = y0 + bot.y * scaleY;
+          const angle = Math.atan2(by - cy, bx - cx);
+          const b = radarBrightness(angle, sweepAngle);
+          if (b > 0.05) {
+            const alpha = (0.4 + b * 0.6).toFixed(2);
+            ctx.fillStyle = `rgba(255, 50, 0, ${alpha})`;
+            ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+          }
+        }
+
+        // Player roaches - brighter, always partially visible
+        for (const r of room.roaches) {
+          if (!r.p) continue;
+          const rx = x0 + r.x * scaleX;
+          const ry = y0 + r.y * scaleY;
+          const angle = Math.atan2(ry - cy, rx - cx);
+          const b = radarBrightness(angle, sweepAngle);
+          const baseAlpha = 0.4; // always partially visible
+          const alpha = Math.min(1, baseAlpha + b * 0.6).toFixed(2);
+          if (r.id === myId) {
+            ctx.fillStyle = `rgba(0, 255, 255, ${alpha})`;
+          } else {
+            ctx.fillStyle = `rgba(255, 0, 255, ${alpha})`;
+          }
+          ctx.fillRect(rx - 1.5, ry - 1.5, 3, 3);
+          // Glow on fresh sweep
+          if (b > 0.5) {
+            ctx.fillStyle = r.id === myId
+              ? `rgba(0, 255, 255, ${(b * 0.3).toFixed(2)})`
+              : `rgba(255, 0, 255, ${(b * 0.3).toFixed(2)})`;
+            ctx.fillRect(rx - 3, ry - 3, 6, 6);
+          }
+        }
+      }
+
+      // Motel indicator
+      if (roomKey === motelRoom && motelData) {
+        const mx = x0 + motelData.x / CONTAINER_WIDTH * cw;
+        const my = y0 + motelData.y / CONTAINER_HEIGHT * ch;
+        const angle = Math.atan2(my - cy, mx - cx);
+        const b = radarBrightness(angle, sweepAngle);
+        const alpha = Math.min(1, 0.5 + b * 0.5).toFixed(2);
+        ctx.fillStyle = `rgba(240, 192, 64, ${alpha})`;
+        ctx.fillRect(mx - 2, my - 2, 4, 4);
       }
     }
   }

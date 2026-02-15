@@ -354,41 +354,10 @@
     }
 
     /* ==================== DESKTOP MINIMAP ==================== */
-    #room-grid {
-      display: grid;
-      gap: 5px;
-    }
-    .room-cell {
-      width: 50px;
-      height: 35px;
-      background: #222;
+    #minimap-canvas {
       border: 1px solid #444;
-      color: #666;
-      font-family: monospace;
-      font-size: 9px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      line-height: 1.2;
-    }
-    .room-cell.active { border-color: #0f0; color: #0f0; background: #131; }
-    .room-cell.motel { border-color: #f0c040; background: #221a00; }
-    .room-cell.active.motel { border-color: #0f0; background: #1a3a00; }
-    .room-cell .wealth-bar {
-      width: 100%;
-      height: 3px;
-      background: #333;
-      margin-top: 2px;
-    }
-    .room-cell .wealth-fill {
-      height: 100%;
-      background: #ff0;
-      transition: width 0.3s;
-    }
-    .room-cell .bot-indicator {
-      color: #a00;
-      font-size: 8px;
+      background: #111;
+      image-rendering: pixelated;
     }
 
     /* ==================== GAME AREA ==================== */
@@ -447,7 +416,7 @@
       #log { display: none; }
       #log-label { display: none; }
       #stats { display: none; }
-      #room-grid { display: none; }
+      #minimap-canvas { display: none; }
       /* On mobile, connection-status is inside hidden left-panel,
          so we force it visible and fixed-position */
       #connection-status {
@@ -583,34 +552,17 @@
 
       /* Mobile minimap — inline below heal bar */
       #mobile-minimap {
-        display: grid;
+        display: block;
         width: 100%;
-        padding: 6px 12px;
+        padding: 0;
         background: #0a0a0a;
-        gap: 2px;
-        justify-content: center;
         flex-shrink: 0;
       }
-      .mm-cell {
+      #mobile-minimap-canvas {
+        display: block;
         width: 100%;
-        aspect-ratio: 1.4;
-        background: #1a1a1a;
-        border: 1px solid #333;
-      }
-      .mm-cell.active {
-        border-color: #0f0;
-        background: #0a2a0a;
-        box-shadow: 0 0 4px #0f0;
-      }
-      .mm-cell.motel {
-        background: #2a2200;
-        border-color: #f0c040;
-        box-shadow: 0 0 3px rgba(240, 192, 64, 0.5);
-      }
-      .mm-cell.active.motel {
-        background: #1a3a00;
-        border-color: #0f0;
-        box-shadow: 0 0 4px #0f0, inset 0 0 4px rgba(240, 192, 64, 0.4);
+        background: #111;
+        image-rendering: pixelated;
       }
 
       /* Mobile motel info — compact countdown below minimap */
@@ -1254,7 +1206,7 @@
       </div>
       <button id="open-shop-btn" class="shop-open-btn">Open Store</button>
 
-      <div id="room-grid"></div>
+      <canvas id="minimap-canvas" width="165" height="165"></canvas>
 
       <div id="controls">
         <kbd>Click</kbd> stomp<br>
@@ -1306,7 +1258,7 @@
       </div>
 
       <!-- Mobile minimap — below heal bar (shown on mobile only via CSS) -->
-      <div id="mobile-minimap"></div>
+      <div id="mobile-minimap"><canvas id="mobile-minimap-canvas" width="150" height="150"></canvas></div>
       <div id="mobile-motel-info">
         <span id="mm-motel-icon">MOTEL</span>
         <span id="mm-motel-countdown">--</span>
