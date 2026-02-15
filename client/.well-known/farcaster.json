@@ -10,9 +10,8 @@
     "splashBackgroundColor": "#000000",
     "requiredChains": ["eip155:8453"]
   },
-  "accountAssociation": {
-    "header": "REPLACE_AFTER_SIGNING_WITH_WARPCAST_MANIFEST_TOOL",
-    "payload": "REPLACE_AFTER_SIGNING",
-    "signature": "REPLACE_AFTER_SIGNING"
+    "accountAssociation": {
+      "header": "eyJmaWQiOjUwNjIsInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHhFRDZBMERGNjY2OTQxZDREMGZBNjNmMEYzZGU3ZWEzZkNGODZlZEREIn0",
+      "payload": "eyJkb21haW4iOiJyb2FjaHN1cnZpdm9yLmNvbSJ9",
+      "signature": "DlyKfDUGNsZwM9eFHhR0vbv1BvhRwuQmqKjQSvMZmglaB8Dc+NtE6TQfGr5BigoPw2LKgv3If6VRMVYzZxYlths="
   }
-}
