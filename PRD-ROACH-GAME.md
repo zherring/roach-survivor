@@ -1,16 +1,17 @@
 # $ROACH Game - Product Requirements Document
 
 ## Overview
-A skill-based multiplayer game where players mint roaches, stomp other roaches for $ROACH tokens, and survive as long as possible. Think crypto meets Whack-a-Mole with 90s Nickelodeon gross-out aesthetic.
+A skill-based multiplayer game where players control roaches, stomp other roaches for $ROACH tokens, and survive as long as possible. Free to play, pay to save. Think crypto meets Whack-a-Mole with 90s Nickelodeon gross-out aesthetic.
 
 ---
 
 ## Core Loop
-1. **Mint a roach** (1c - $1, price scales with popularity) to enter the economy
+1. **Play for free** — jump in instantly, control a roach, start earning
 2. **Stomp roaches** to earn $ROACH
 3. **Survive** to passively accumulate $ROACH over time
 4. **Spend $ROACH** on upgrades/healing or risk losing it
 5. **Get stomped** = lose 90% of your $ROACH to the stomper
+6. **Save Game** (USDC payment) — unlock persistence so your roach, balance, and upgrades survive across sessions
 
 ---
 
@@ -160,32 +161,56 @@ A skill-based multiplayer game where players mint roaches, stomp other roaches f
   - Bots spawn/despawn dynamically as wealth changes
   - Creates natural danger scaling - rich rooms become hunting grounds
 
-### Anonymous Players
-- Can stomp without signing in
-- All rewards go to house (used to spawn more roaches)
-- Must mint a roach to earn $ROACH
+### Free Players (No Save)
+- Can play, stomp, and earn $ROACH without paying
+- All progress is ephemeral — close the tab, lose everything
+- Must "Save Game" (USDC payment) to unlock persistence and the upgrade store
 
 ---
 
-## Tokenomics ($ROACH via Vibecoins)
+## Tokenomics ($ROACH on Base)
 
-### Revenue Split (on mint/purchase)
-- **10% to team** (vesting over time)
-- **90% locked in LP forever** (anti-rug, permanent liquidity)
+### Token
+- **$ROACH** is a Clanker token on Base, deployed via Farcaster
+- **90% treasury** — locked in the game, no withdraw affordance currently. Can migrate to true on-chain contract later if successful.
+- **10% float** — public liquidity on Clanker/Base
+- No on-chain minting in-app — token exists independently
 
-### Withdrawal Mechanic
-- **Timelock on withdrawals** (n minutes/hours/days - TBD)
-- During timelock, your roach is **still playing and vulnerable**
-- **If stomped during timelock = lose everything** (including pending withdrawal)
-- Must actively steer your roach to survive the withdrawal period
-- Incentivizes spending on upgrades over cashing out
+### Freemium Model ("Save Game")
+- **Everyone plays free** — no payment gate to enter
+- **Free players get no persistence** — close the tab, lose everything (balance, upgrades, session)
+- **Paid players get persistence** — session restore, banked balance, permanent upgrades
+- Payment unlocks the **Store** (upgrade shop); free players see a pulsing **"SAVE GAME"** button instead
+
+### Payment Flow (USDC on Base)
+- Player clicks "SAVE GAME" → RainbowKit wallet connect modal → sends USDC to treasury address
+- Server verifies USDC transfer on-chain (Base RPC, parses Transfer event)
+- Once verified: player marked as paid, session persists forever
+- Wallet connection: RainbowKit (auto-detects Farcaster in miniapp, MetaMask/Coinbase/WalletConnect for standalone)
+
+### Pricing Tiers (dynamic, resettable)
+| Players | Price (USDC) |
+|---------|-------------|
+| First 10 | $0.01 |
+| Next 25 | $0.25 |
+| Next 100 | $1.00 |
+| Next 100 | $2.50 |
+| Everyone after | $5.00 |
+
+- `paid_player_count` is manually resettable by operator (SQL update)
+- After reset, curve restarts from tier 1 at current count
+
+### $ROACH Payouts
+- **Manual weekly distribution** — operator queries paid players and sends $ROACH tokens
+- Automated payouts planned for future but not in v1
+- In-game $ROACH balance is tracked server-side, not on-chain
 
 ### Economy Flow
 - Player stomps roach → gets victim's 90%
 - Victim respawns with 10%
 - Survival → passive $ROACH accumulation
 - Spending → permanent upgrades (safe value storage) or healing
-- Withdrawal → risky, must survive timelock
+- Save Game → USDC payment unlocks persistence + upgrades
 
 ---
 
@@ -251,25 +276,29 @@ A skill-based multiplayer game where players mint roaches, stomp other roaches f
 - [ ] Permanent upgrades (boot size, multi-stomp, rate-of-fire)
 - [ ] Consumables (roach motel traps as area denial)
 - [ ] Withdrawal timelock mechanic (withdraw banked $ROACH to real tokens)
-- [ ] Vibecoins integration
+- [ ] USDC payment gate ("Save Game") with RainbowKit wallet connect on Base
+- [ ] Freemium persistence (free=ephemeral, paid=persistent)
+- [ ] Dynamic pricing tiers ($0.01 → $5.00 curve)
+- [ ] Pulsing save button that intensifies with balance
 - [ ] 10x10 room grid (currently 2x2)
 - [ ] Multiplayer networking
 - [ ] Sound design
 - [ ] Mobile touch controls
 - [ ] Leaderboards/seasons
-- [ ] Roach minting with real crypto
+- [ ] Automated $ROACH token payouts (currently manual)
 
 ---
 
 ## Open Questions / TBD
 
-1. **Mint price scaling** - exact formula for 1c → $1 growth
-2. **Withdrawal timelock duration** - minutes? hours? days?
+1. ~~**Mint price scaling**~~ - RESOLVED: 5-tier curve from $0.01 to $5.00
+2. **Withdrawal timelock duration** - deferred (manual payouts for now)
 3. **Survival income rate** - how much $ROACH per second/minute alive?
 4. **Upgrade costs** - pricing for permanent upgrades
 5. **Roach visual uniqueness** - procedurally generated? traits? NFT-style?
 6. **Leaderboards/seasons** - any competitive layer?
 7. **Sound design** - squelches, skittering, gross sound effects?
+8. **$ROACH payout formula** - how much $ROACH per USDC paid? per kill? per survival time?
 
 ---
 
@@ -293,4 +322,4 @@ A skill-based multiplayer game where players mint roaches, stomp other roaches f
 
 ## Summary
 
-$ROACH is a skill-based, real-time multiplayer stomping game with crypto mechanics. The rubber-band system (rich = slow) combined with the 90% death penalty and withdrawal timelock creates a game that rewards skill, active play, and reinvestment over passive extraction. The pixel aesthetic and 90s gross-out vibe keeps it fun and irreverent.
+$ROACH is a skill-based, real-time multiplayer stomping game with crypto mechanics. Free to play, pay to save — the freemium model lets anyone jump in instantly, but persistence requires a USDC payment on Base. The rubber-band system (rich = slow) combined with the 90% death penalty creates a game that rewards skill, active play, and reinvestment over passive extraction. The pixel aesthetic and 90s gross-out vibe keeps it fun and irreverent.
