@@ -10,9 +10,12 @@ async function initDB() {
     throw new Error('DATABASE_URL environment variable is required');
   }
 
+  const dbUrl = process.env.DATABASE_URL;
+  const useSSL = !dbUrl.includes('localhost') && !dbUrl.includes('sslmode=disable');
+
   pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : false,
+    connectionString: dbUrl,
+    ssl: useSSL ? { rejectUnauthorized: false } : false,
   });
 
   await pool.query(`
