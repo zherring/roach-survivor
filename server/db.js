@@ -1,135 +1,97 @@
-import Database from 'better-sqlite3';
+import pg from 'pg';
 import { randomUUID } from 'crypto';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'roach.db');
 const SESSION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
-class RoachDB {
-  constructor() {
-    this.db = new Database(DB_PATH);
-    this.db.pragma('journal_mode = WAL');
-    this._initSchema();
-    this._prepareStatements();
+let pool;
+
+async function initDB() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL environment variable is required');
   }
 
-  _initSchema() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS players (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        banked_balance REAL DEFAULT 0,
-        total_kills INTEGER DEFAULT 0,
-        boot_size_level INTEGER DEFAULT 0,
-        multi_stomp_level INTEGER DEFAULT 0,
-        rate_of_fire_level INTEGER DEFAULT 0,
-        gold_magnet_level INTEGER DEFAULT 0,
-        wall_bounce_level INTEGER DEFAULT 0,
-        idle_income_level INTEGER DEFAULT 0,
-        shell_armor_level INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        last_seen INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS sessions (
-        player_id TEXT PRIMARY KEY,
-        room TEXT NOT NULL,
-        position_x REAL,
-        position_y REAL,
-        balance REAL DEFAULT 0,
-        hp INTEGER DEFAULT 2,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (player_id) REFERENCES players(id)
-      );
-    `);
+  pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : false,
+  });
 
-    // Backward-compatible migrations for pre-M6 databases.
-    const columns = this.db.prepare('PRAGMA table_info(players)').all().map((c) => c.name);
-    const addColumn = (name, ddl) => {
-      if (!columns.includes(name)) {
-        this.db.exec(ddl);
-        columns.push(name);
-      }
-    };
-    addColumn('boot_size_level', 'ALTER TABLE players ADD COLUMN boot_size_level INTEGER DEFAULT 0');
-    addColumn('multi_stomp_level', 'ALTER TABLE players ADD COLUMN multi_stomp_level INTEGER DEFAULT 0');
-    addColumn('rate_of_fire_level', 'ALTER TABLE players ADD COLUMN rate_of_fire_level INTEGER DEFAULT 0');
-    addColumn('gold_magnet_level', 'ALTER TABLE players ADD COLUMN gold_magnet_level INTEGER DEFAULT 0');
-    addColumn('wall_bounce_level', 'ALTER TABLE players ADD COLUMN wall_bounce_level INTEGER DEFAULT 0');
-    addColumn('idle_income_level', 'ALTER TABLE players ADD COLUMN idle_income_level INTEGER DEFAULT 0');
-    addColumn('shell_armor_level', 'ALTER TABLE players ADD COLUMN shell_armor_level INTEGER DEFAULT 0');
-    // M7: platform identity columns
-    addColumn('platform_type', 'ALTER TABLE players ADD COLUMN platform_type TEXT DEFAULT NULL');
-    addColumn('platform_id', 'ALTER TABLE players ADD COLUMN platform_id TEXT DEFAULT NULL');
-  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS players (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      banked_balance DOUBLE PRECISION DEFAULT 0,
+      total_kills INTEGER DEFAULT 0,
+      boot_size_level INTEGER DEFAULT 0,
+      multi_stomp_level INTEGER DEFAULT 0,
+      rate_of_fire_level INTEGER DEFAULT 0,
+      gold_magnet_level INTEGER DEFAULT 0,
+      wall_bounce_level INTEGER DEFAULT 0,
+      idle_income_level INTEGER DEFAULT 0,
+      shell_armor_level INTEGER DEFAULT 0,
+      platform_type TEXT DEFAULT NULL,
+      platform_id TEXT DEFAULT NULL,
+      created_at BIGINT NOT NULL,
+      last_seen BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      player_id TEXT PRIMARY KEY REFERENCES players(id),
+      room TEXT NOT NULL,
+      position_x DOUBLE PRECISION,
+      position_y DOUBLE PRECISION,
+      balance DOUBLE PRECISION DEFAULT 0,
+      hp INTEGER DEFAULT 2,
+      updated_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions (updated_at);
+    CREATE INDEX IF NOT EXISTS idx_players_platform ON players (platform_type, platform_id);
+  `);
+}
 
-  _prepareStatements() {
-    this._stmts = {
-      createPlayer: this.db.prepare(
-        `INSERT INTO players (id, name, banked_balance, total_kills, created_at, last_seen)
-         VALUES (?, ?, 0, 0, ?, ?)`
-      ),
-      getPlayer: this.db.prepare('SELECT * FROM players WHERE id = ?'),
-      getSession: this.db.prepare(
-        'SELECT * FROM sessions WHERE player_id = ? AND updated_at > ?'
-      ),
-      upsertSession: this.db.prepare(
-        `INSERT INTO sessions (player_id, room, position_x, position_y, balance, hp, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(player_id) DO UPDATE SET
-           room=excluded.room, position_x=excluded.position_x, position_y=excluded.position_y,
-           balance=excluded.balance, hp=excluded.hp, updated_at=excluded.updated_at`
-      ),
-      updateBanked: this.db.prepare(
-        'UPDATE players SET banked_balance = ?, last_seen = ? WHERE id = ?'
-      ),
-      updateUpgrades: this.db.prepare(
-        `UPDATE players
-         SET boot_size_level = ?, multi_stomp_level = ?, rate_of_fire_level = ?,
-             gold_magnet_level = ?, wall_bounce_level = ?, idle_income_level = ?,
-             shell_armor_level = ?, last_seen = ?
-         WHERE id = ?`
-      ),
-      incrementKills: this.db.prepare(
-        'UPDATE players SET total_kills = total_kills + 1, last_seen = ? WHERE id = ?'
-      ),
-      cleanSessions: this.db.prepare(
-        'DELETE FROM sessions WHERE updated_at < ?'
-      ),
-      getPlayerByPlatform: this.db.prepare(
-        'SELECT * FROM players WHERE platform_type = ? AND platform_id = ?'
-      ),
-      linkPlatform: this.db.prepare(
-        'UPDATE players SET platform_type = ?, platform_id = ?, last_seen = ? WHERE id = ?'
-      ),
-    };
-  }
-
-  createPlayer(name) {
+const db = {
+  async createPlayer(name) {
     const id = randomUUID();
     const now = Date.now();
-    this._stmts.createPlayer.run(id, name, now, now);
+    await pool.query(
+      `INSERT INTO players (id, name, banked_balance, total_kills, created_at, last_seen)
+       VALUES ($1, $2, 0, 0, $3, $4)`,
+      [id, name, now, now]
+    );
     return id;
-  }
+  },
 
-  getPlayer(token) {
-    return this._stmts.getPlayer.get(token) || null;
-  }
+  async getPlayer(token) {
+    const { rows } = await pool.query('SELECT * FROM players WHERE id = $1', [token]);
+    return rows[0] || null;
+  },
 
-  getSession(playerId) {
-    return this._stmts.getSession.get(playerId, Date.now() - SESSION_EXPIRY_MS) || null;
-  }
+  async getSession(playerId) {
+    const cutoff = Date.now() - SESSION_EXPIRY_MS;
+    const { rows } = await pool.query(
+      'SELECT * FROM sessions WHERE player_id = $1 AND updated_at > $2',
+      [playerId, cutoff]
+    );
+    return rows[0] || null;
+  },
 
-  updateSession(playerId, room, x, y, balance, hp) {
-    this._stmts.upsertSession.run(playerId, room, x, y, balance, hp, Date.now());
-  }
+  async updateSession(playerId, room, x, y, balance, hp) {
+    await pool.query(
+      `INSERT INTO sessions (player_id, room, position_x, position_y, balance, hp, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (player_id) DO UPDATE SET
+         room = EXCLUDED.room, position_x = EXCLUDED.position_x, position_y = EXCLUDED.position_y,
+         balance = EXCLUDED.balance, hp = EXCLUDED.hp, updated_at = EXCLUDED.updated_at`,
+      [playerId, room, x, y, balance, hp, Date.now()]
+    );
+  },
 
-  updateBankedBalance(playerId, newTotal) {
-    this._stmts.updateBanked.run(newTotal, Date.now(), playerId);
-  }
+  async updateBankedBalance(playerId, newTotal) {
+    await pool.query(
+      'UPDATE players SET banked_balance = $1, last_seen = $2 WHERE id = $3',
+      [newTotal, Date.now(), playerId]
+    );
+  },
 
-  updateUpgrades(playerId, upgrades) {
+  async updateUpgrades(playerId, upgrades) {
     const bootSize = Number.isFinite(upgrades?.bootSize) ? upgrades.bootSize : 0;
     const multiStomp = Number.isFinite(upgrades?.multiStomp) ? upgrades.multiStomp : 0;
     const rateOfFire = Number.isFinite(upgrades?.rateOfFire) ? upgrades.rateOfFire : 0;
@@ -137,48 +99,70 @@ class RoachDB {
     const wallBounce = Number.isFinite(upgrades?.wallBounce) ? upgrades.wallBounce : 0;
     const idleIncome = Number.isFinite(upgrades?.idleIncome) ? upgrades.idleIncome : 0;
     const shellArmor = Number.isFinite(upgrades?.shellArmor) ? upgrades.shellArmor : 0;
-    this._stmts.updateUpgrades.run(
-      bootSize,
-      multiStomp,
-      rateOfFire,
-      goldMagnet,
-      wallBounce,
-      idleIncome,
-      shellArmor,
-      Date.now(),
-      playerId
+    await pool.query(
+      `UPDATE players
+       SET boot_size_level = $1, multi_stomp_level = $2, rate_of_fire_level = $3,
+           gold_magnet_level = $4, wall_bounce_level = $5, idle_income_level = $6,
+           shell_armor_level = $7, last_seen = $8
+       WHERE id = $9`,
+      [bootSize, multiStomp, rateOfFire, goldMagnet, wallBounce, idleIncome, shellArmor, Date.now(), playerId]
     );
-  }
+  },
 
-  incrementKills(playerId) {
-    this._stmts.incrementKills.run(Date.now(), playerId);
-  }
+  async incrementKills(playerId) {
+    await pool.query(
+      'UPDATE players SET total_kills = total_kills + 1, last_seen = $1 WHERE id = $2',
+      [Date.now(), playerId]
+    );
+  },
 
-  bulkUpdateSessions(sessions) {
-    const tx = this.db.transaction((items) => {
-      for (const s of items) {
-        this._stmts.upsertSession.run(s.playerId, s.room, s.x, s.y, s.balance, s.hp, s.timestamp);
+  async bulkUpdateSessions(sessions) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const s of sessions) {
+        await client.query(
+          `INSERT INTO sessions (player_id, room, position_x, position_y, balance, hp, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (player_id) DO UPDATE SET
+             room = EXCLUDED.room, position_x = EXCLUDED.position_x, position_y = EXCLUDED.position_y,
+             balance = EXCLUDED.balance, hp = EXCLUDED.hp, updated_at = EXCLUDED.updated_at`,
+          [s.playerId, s.room, s.x, s.y, s.balance, s.hp, s.timestamp]
+        );
       }
-    });
-    tx(sessions);
-  }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
 
-  cleanStaleSessions() {
-    const result = this._stmts.cleanSessions.run(Date.now() - SESSION_EXPIRY_MS);
-    return result.changes;
-  }
+  async cleanStaleSessions() {
+    const cutoff = Date.now() - SESSION_EXPIRY_MS;
+    const result = await pool.query('DELETE FROM sessions WHERE updated_at < $1', [cutoff]);
+    return result.rowCount;
+  },
 
-  getPlayerByPlatform(platformType, platformId) {
-    return this._stmts.getPlayerByPlatform.get(platformType, platformId) || null;
-  }
+  async getPlayerByPlatform(platformType, platformId) {
+    const { rows } = await pool.query(
+      'SELECT * FROM players WHERE platform_type = $1 AND platform_id = $2',
+      [platformType, platformId]
+    );
+    return rows[0] || null;
+  },
 
-  linkPlatform(playerId, platformType, platformId) {
-    this._stmts.linkPlatform.run(platformType, platformId, Date.now(), playerId);
-  }
+  async linkPlatform(playerId, platformType, platformId) {
+    await pool.query(
+      'UPDATE players SET platform_type = $1, platform_id = $2, last_seen = $3 WHERE id = $4',
+      [platformType, platformId, Date.now(), playerId]
+    );
+  },
 
-  close() {
-    this.db.close();
-  }
-}
+  async close() {
+    if (pool) await pool.end();
+  },
+};
 
-export const db = new RoachDB();
+export { db, initDB };

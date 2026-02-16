@@ -87,10 +87,6 @@ export class GameServer {
     this.botAdjustTimer = 0;
     this.sessionSaveTimer = 0;
 
-    // Clean stale sessions on startup
-    const cleaned = db.cleanStaleSessions();
-    if (cleaned) console.log(`Cleaned ${cleaned} stale sessions`);
-
     // Create 3x3 grid
     for (let x = 0; x < GRID_SIZE; x++) {
       for (let y = 0; y < GRID_SIZE; y++) {
@@ -103,12 +99,17 @@ export class GameServer {
     }
   }
 
+  async init() {
+    const cleaned = await db.cleanStaleSessions();
+    if (cleaned) console.log(`Cleaned ${cleaned} stale sessions`);
+  }
+
   start() {
     setInterval(() => this.tick(), TICK_RATE);
     console.log(`Game server started: ${GRID_SIZE}x${GRID_SIZE} grid, ${TICK_RATE}ms tick`);
   }
 
-  addPlayer(ws, reconnectToken = null, platformInfo = null) {
+  async addPlayer(ws, reconnectToken = null, platformInfo = null) {
     let token = reconnectToken;
     let name, roomKey, bankedBalance, restored;
     let upgrades = createDefaultUpgrades();
@@ -117,7 +118,7 @@ export class GameServer {
     // Try to restore via platform identity first (cross-device persistence)
     let session = null;
     if (!token && platformInfo && platformInfo.platformType && platformInfo.platformId) {
-      const platformPlayer = db.getPlayerByPlatform(platformInfo.platformType, platformInfo.platformId);
+      const platformPlayer = await db.getPlayerByPlatform(platformInfo.platformType, platformInfo.platformId);
       if (platformPlayer) {
         token = platformPlayer.id;
         console.log(`Player found via platform identity: ${platformInfo.platformType}:${platformInfo.platformId}`);
@@ -126,7 +127,7 @@ export class GameServer {
 
     // Try to restore from DB via token
     if (token) {
-      const existing = db.getPlayer(token);
+      const existing = await db.getPlayer(token);
       if (existing) {
         name = existing.name;
         bankedBalance = existing.banked_balance;
@@ -139,7 +140,7 @@ export class GameServer {
           idleIncome: existing.idle_income_level,
           shellArmor: existing.shell_armor_level,
         });
-        session = db.getSession(token);
+        session = await db.getSession(token);
         roomKey = session ? session.room : '1,1';
         // Validate room exists
         if (!this.rooms.has(roomKey)) roomKey = '1,1';
@@ -147,7 +148,7 @@ export class GameServer {
 
         // Link platform identity to this player if not already linked
         if (platformInfo && platformInfo.platformType && platformInfo.platformId && !existing.platform_id) {
-          db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
+          await db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
           linkedPlatform = platformInfo.platformType;
           console.log(`Linked ${platformInfo.platformType}:${platformInfo.platformId} to player ${token.slice(0, 8)}...`);
         }
@@ -162,7 +163,7 @@ export class GameServer {
     if (!token) {
       name = platformInfo?.name ||
         `${ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]} ${NOUNS[Math.floor(Math.random() * NOUNS.length)]}`;
-      token = db.createPlayer(name);
+      token = await db.createPlayer(name);
       roomKey = '1,1';
       bankedBalance = 0;
       restored = false;
@@ -170,7 +171,7 @@ export class GameServer {
 
       // Link platform identity to new player
       if (platformInfo && platformInfo.platformType && platformInfo.platformId) {
-        db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
+        await db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
         linkedPlatform = platformInfo.platformType;
         console.log(`New player linked to ${platformInfo.platformType}:${platformInfo.platformId}`);
       }
@@ -222,18 +223,18 @@ export class GameServer {
     return roach.id;
   }
 
-  removePlayer(playerId) {
+  async removePlayer(playerId) {
     const player = this.players.get(playerId);
     if (!player) return;
 
     // Save session state to DB for reconnection
     if (player.token) {
-      db.updateSession(
+      await db.updateSession(
         player.token, player.room,
         player.roach.x, player.roach.y,
         player.roach.balance, player.roach.hp
       );
-      db.updateUpgrades(player.token, player.upgrades);
+      await db.updateUpgrades(player.token, player.upgrades);
     }
 
     const room = this.rooms.get(player.room);
@@ -246,7 +247,7 @@ export class GameServer {
     this.players.delete(playerId);
   }
 
-  handleMessage(playerId, msg) {
+  async handleMessage(playerId, msg) {
     const player = this.players.get(playerId);
     if (!player) return;
     if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
@@ -346,9 +347,9 @@ export class GameServer {
         player.upgrades[upgradeKey] = currentLevel + 1;
         player.roach.upgrades = player.upgrades;
         if (player.token) {
-          db.updateUpgrades(player.token, player.upgrades);
+          await db.updateUpgrades(player.token, player.upgrades);
           if (usedFromBank > 0) {
-            db.updateBankedBalance(player.token, player.bankedBalance);
+            await db.updateBankedBalance(player.token, player.bankedBalance);
           }
         }
         this.send(player.ws, {
@@ -412,19 +413,19 @@ export class GameServer {
           player.roach.balance = 0;
           evt.totalBanked = player.bankedBalance;
           if (player.token) {
-            db.updateBankedBalance(player.token, player.bankedBalance);
+            db.updateBankedBalance(player.token, player.bankedBalance).catch(err => console.error('DB bank error:', err.message));
           }
         }
       }
       allEvents.push(evt);
     }
 
-    // Track kills in DB
+    // Track kills in DB (fire-and-forget)
     for (const evt of allEvents) {
       if (evt.type === 'stomp_kill' && evt.stomperId) {
         const killer = this.players.get(evt.stomperId);
         if (killer && killer.token) {
-          db.incrementKills(killer.token);
+          db.incrementKills(killer.token).catch(err => console.error('DB kill error:', err.message));
         }
       }
     }
@@ -433,7 +434,7 @@ export class GameServer {
     this.sessionSaveTimer++;
     if (this.sessionSaveTimer >= 200) {
       this.sessionSaveTimer = 0;
-      this.saveSessions();
+      this.saveSessions().catch(err => console.error('DB session save error:', err.message));
     }
 
     // Adjust bots every ~60 ticks (3 seconds)
@@ -554,7 +555,7 @@ export class GameServer {
     });
   }
 
-  saveSessions() {
+  async saveSessions() {
     const sessions = [];
     const now = Date.now();
     for (const [, player] of this.players) {
@@ -570,7 +571,7 @@ export class GameServer {
       });
     }
     if (sessions.length > 0) {
-      db.bulkUpdateSessions(sessions);
+      await db.bulkUpdateSessions(sessions);
     }
   }
 

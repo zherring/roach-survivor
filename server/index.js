@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import { GameServer } from './game-server.js';
-import { db } from './db.js';
+import { db, initDB } from './db.js';
 
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
@@ -87,11 +87,13 @@ wss.on('connection', (ws) => {
   const initTimeout = setTimeout(() => {
     if (!initialized) {
       initialized = true;
-      playerId = gameServer.addPlayer(ws);
+      gameServer.addPlayer(ws).then(id => {
+        playerId = id;
+      }).catch(err => console.error('Failed to add player on timeout:', err.message));
     }
   }, 1000);
 
-  ws.on('message', (data) => {
+  ws.on('message', async (data) => {
     try {
       const msg = JSON.parse(data);
 
@@ -112,44 +114,48 @@ wss.on('connection', (ws) => {
         }
 
         if (msg.type === 'reconnect' && typeof msg.token === 'string') {
-          playerId = gameServer.addPlayer(ws, msg.token, platformInfo);
+          playerId = await gameServer.addPlayer(ws, msg.token, platformInfo);
         } else {
-          playerId = gameServer.addPlayer(ws, null, platformInfo);
+          playerId = await gameServer.addPlayer(ws, null, platformInfo);
           // Process this first message normally too
-          if (playerId) gameServer.handleMessage(playerId, msg);
+          if (playerId) await gameServer.handleMessage(playerId, msg);
         }
         return;
       }
 
       if (playerId) {
-        gameServer.handleMessage(playerId, msg);
+        await gameServer.handleMessage(playerId, msg);
       }
     } catch (e) {
       // ignore malformed messages
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', async () => {
     clearTimeout(initTimeout);
     if (playerId) {
-      gameServer.removePlayer(playerId);
+      await gameServer.removePlayer(playerId);
     }
   });
 });
 
-gameServer.start();
-
 // Graceful shutdown
-function shutdown() {
+async function shutdown() {
   console.log('Shutting down...');
-  gameServer.saveSessions();
-  db.close();
+  await gameServer.saveSessions();
+  await db.close();
   console.log('State saved. Exiting.');
   process.exit(0);
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-server.listen(PORT, () => {
-  console.log(`$ROACH server running on http://localhost:${PORT}`);
-});
+// Initialize DB, then start
+(async () => {
+  await initDB();
+  await gameServer.init();
+  gameServer.start();
+  server.listen(PORT, () => {
+    console.log(`$ROACH server running on http://localhost:${PORT}`);
+  });
+})();
