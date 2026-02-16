@@ -58,10 +58,10 @@ This document started as a proposal (see git history for the original draft). It
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Payments/Indexer | Not started | No crypto integration yet |
-| Persistence Layer | **Done (M5)** | SQLite via better-sqlite3, session tokens, reconnection |
+| Payments (M9) | Not started | Freemium USDC gate on Base — "Save Game" button, RainbowKit wallet connect, on-chain verification, persistence unlock |
+| Persistence Layer | **Done (M5)** | Postgres via pg (migrated from SQLite in PR #16), session tokens, reconnection |
 | Admin Console | Not started | No ops tooling |
-| Wallet Connect | Not started | No auth at all — anonymous sessions |
+| Wallet Connect | Not started | M9 adds RainbowKit for USDC payment (auto-detects Farcaster, MetaMask/Coinbase/WalletConnect fallback) |
 | State Deltas | Skipped | Full snapshots instead (simpler, works fine) |
 | Session Restore | **Done (M5)** | UUID session tokens in localStorage, 5-min restore window, banked balance persists forever |
 | Room Sharding (multi-process) | Not started | Single process handles all rooms |
@@ -77,7 +77,7 @@ kolkata/
 │   ├── roach.js           # Entity: movement, speed calc, hit/die (185 lines)
 │   ├── house-bot.js       # Bot AI: targeting, pursuit, AoE stomp (156 lines)
 │   ├── motel.js           # Banking: spawn/despawn, collision, progress (115 lines)
-│   └── db.js              # SQLite persistence: players, sessions, bulk saves (105 lines)
+│   └── db.js              # Postgres persistence: players, sessions, bulk saves (~170 lines)
 ├── client/
 │   ├── index.html         # Full UI + CSS + mobile layout + prospector NPC (1007 lines)
 │   ├── game.js            # Network, prediction, rendering, VFX, audio, touch controls (1516 lines)
@@ -95,11 +95,11 @@ kolkata/
 │       └── synth.wav
 ├── shared/
 │   └── constants.js       # All tuning values (42 lines)
-├── package.json           # ws dependency, "start" script
+├── package.json           # pg + ws dependencies, "start" script
 └── AGENT-IMPLEMENTATION.md # Agent API plan (not built yet)
 ```
 
-**Total: ~3,664 lines of game code.** Single dependency (`ws`).
+**Total: ~3,664 lines of game code.** Two dependencies (`pg`, `ws`).
 
 ### Current Game Constants (tuned through playtesting)
 
@@ -196,15 +196,15 @@ What was built:
 **Goal:** Banked balances survive server restarts. Players can reconnect after drops.
 
 What was built:
-1. **SQLite persistence** via `better-sqlite3` — `players` table (id, name, banked_balance, total_kills) + `sessions` table (room, position, balance, hp)
+1. **Postgres persistence** via `pg` — `players` table (id, name, banked_balance, total_kills, upgrades, platform identity) + `sessions` table (room, position, balance, hp). Migrated from SQLite/better-sqlite3 in PR #16.
 2. **Session tokens** — UUID v4 generated on first connect, stored in localStorage, sent on reconnect
 3. **Reconnect with restore** — within 5 minutes: full position/room/balance/hp restore. After 5 minutes: fresh spawn but banked balance preserved forever
 4. **Graceful shutdown** — SIGTERM/SIGINT handlers flush all sessions to DB before exit
 5. **Periodic saves** — bulk session writes every ~10 seconds in tick loop
 6. **Kill tracking** — lifetime kill stats persisted per player
-7. **WAL mode** — for concurrent read/write performance
+7. **Async DB layer** — all methods async with `pool.query()`, `$N` parameterized queries, connection pooling
 
-Files: new `server/db.js` (~105 lines), modified `server/game-server.js`, `server/index.js`, `client/game.js`
+Files: new `server/db.js` (~170 lines), modified `server/game-server.js`, `server/index.js`, `client/game.js`
 
 **Why this matters:** Foundation for long-term progression (M6 complete) and future M7/M8 systems.
 
@@ -215,7 +215,7 @@ Files: new `server/db.js` (~105 lines), modified `server/game-server.js`, `serve
 **Outcome:** Implemented full persistent upgrade economy with server-authoritative enforcement, modal shop UX, and mobile-friendly purchasing flow.
 
 What was built:
-1. **Persistent upgrade model** — added upgrade levels to SQLite player schema with backward-compatible migrations and save/load hooks.
+1. **Persistent upgrade model** — added upgrade levels to player schema with backward-compatible migrations and save/load hooks.
 2. **Upgrade catalog + scaling** — centralized defs/cost curves/helpers in shared constants (`bootSize`, `multiStomp`, `rateOfFire`, `goldMagnet`, `wallBounce`, `idleIncome`, `shellArmor`) with high max levels for incremental progression.
 3. **Server-side purchase flow** — `buy_upgrade` message validation, max-level checks, affordability checks, and purchase success/failure responses.
 4. **Bank-first spending** — purchases now withdraw from banked balance before wallet balance, with exact source amounts returned to client logs/UI.
@@ -281,20 +281,75 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 
 ---
 
-### M9: Crypto Integration -- NOT STARTED
-**Goal:** Real $ROACH token economy on Base chain.
-**Effort:** Multiple days, separate workstream
-**Blocked by:** Product/legal rollout decisions and chain-integration scope (core game prerequisites are now in place). M7 exposes wallet providers from each platform.
+### M9: Crypto Integration — "Save Game" -- NOT STARTED
+**Goal:** Freemium USDC payment gate on Base. Everyone plays free (ephemeral sessions). Paying with USDC unlocks persistence + the upgrade shop. $ROACH token deployed separately via Clanker; payouts are manual/weekly.
+**Effort:** 2-3 focused sessions
+**Blocked by:** M7 (wallet provider abstraction). M5/M6 persistence and upgrades are the foundation.
+**Note:** DB migrated to Postgres (PR #16). All DB methods are async `pool.query()` with `$N` params. Schema changes via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `initDB()`.
 
-What to build:
-1. **Vibecoins/Clanker token deployment** — $ROACH on Base
-2. **Minting flow** — offchain mint triggered by Base $1 payment
-3. **Withdrawal timelock** — request withdrawal, roach must survive N minutes while pending
-4. **Payment indexer** — watch Base chain for mint/withdraw transactions, credit accounts
-5. **Admin console** — view balances, process manual withdrawals, emergency controls
-6. **Wallet connect** — browser wallet integration for Base (leverages M7 wallet provider abstraction)
+#### Design: Freemium Persistence Model
+- **Free players:** can play, stomp, earn — but nothing saves. Close the tab = lose everything. Shop is hidden; they see a pulsing **"SAVE GAME"** button instead.
+- **Paid players:** full persistence (session restore, banked balance, permanent upgrades). Store button replaces Save button.
+- **Save button UX:** gold/orange pulse animation that intensifies with player's current balance (CSS custom property `--save-intensity` driven by JS). Mobile nudge text ("yer roach is gettin fat...") appears when balance > $2.
+- **Tutorial update:** one extra line — "Your progress is lost when you close the tab unless you save. Hit SAVE GAME to keep your roach forever."
 
-Files: new `server/indexer.js`, new `server/admin.js`, `client/game.js` (wallet UI), `server/game-server.js` (withdrawal timer logic)
+#### Pricing Tiers (dynamic, operator-resettable)
+| Tier | Count | Price (USDC) |
+|------|-------|-------------|
+| 1 | First 10 | $0.01 |
+| 2 | Next 25 | $0.25 |
+| 3 | Next 100 | $1.00 |
+| 4 | Next 100 | $2.50 |
+| 5 | Everyone after | $5.00 |
+
+`paid_player_count` stored in single-row `payment_config` Postgres table. Operator resets via SQL; curve continues from new count.
+
+#### Payment Flow
+1. Player clicks "SAVE GAME" → client fetches `GET /api/payment-price` (price + recipient address)
+2. Client shows save overlay → **RainbowKit** (CDN) handles wallet connect modal, chain switching, wallet discovery
+3. RainbowKit auto-detects Farcaster wallet in miniapp context; shows MetaMask/Coinbase/WalletConnect for standalone
+4. "Pay" → RainbowKit/wagmi/viem construct USDC `transfer()` → wallet signs → tx submitted to Base
+5. Client waits for tx confirmation, then `POST /api/verify-payment {txHash, walletAddress, playerId}`
+6. Server calls Base RPC `eth_getTransactionReceipt`, parses USDC Transfer event log, validates sender/recipient/amount
+7. Server marks player paid in Postgres, increments `paid_player_count`, logs to `payment_log` audit table
+8. Client reconnects WebSocket → server sees `paid_at` populated → full persistence kicks in
+
+#### USDC Verification (server-side, no dependencies)
+- Native `fetch` to Base RPC (`https://mainnet.base.org` or `BASE_RPC_URL` env)
+- `eth_getTransactionReceipt` → find log where `address` = USDC contract (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`) and `topics[0]` = Transfer event sig (`0xddf252ad...`)
+- Decode: `from` = `topics[1]` (strip padding), `to` = `topics[2]`, `amount` = `data` (BigInt, divide by 10^6)
+- Validate: sender matches wallet, recipient matches `PAYMENT_RECIPIENT_ADDRESS` env, amount >= tier price
+
+#### Server Persistence Gate
+- `removePlayer()` in `game-server.js`: skip session/balance/upgrade saves if `!player.paid`
+- `handleMessage()` `buy_upgrade` case: reject with `reason: 'not_paid'` if not paid
+- `welcome` message: include `paid: boolean` so client knows which UI to show
+
+#### What to build:
+
+**New files:**
+1. **`server/payment-config.js`** (~30 lines) — pricing tiers array, `getPriceForPlayerCount()` helper, USDC/Base constants, reads `PAYMENT_RECIPIENT_ADDRESS` from env
+2. **`server/payment-verifier.js`** (~60 lines) — `verifyUSDCTransfer(txHash, sender, minAmount)` via Base RPC, returns `{valid, amountUSDC}` or `{valid: false, reason}`
+3. **`client/wallet.js`** (~80 lines) — RainbowKit + wagmi + viem via CDN. Handles wallet connect, chain switching, USDC transfer. Exports `connectWallet()`, `sendUSDC()`, `getAddress()`.
+
+**Modified files:**
+4. **`server/db.js`** — Postgres `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for `wallet_address`, `paid_at`, `paid_amount`, `payment_tx_hash`. New `payment_config` table (single-row counter). New `payment_log` audit table. ~6 new async methods.
+5. **`server/index.js`** — two new HTTP routes: `GET /api/payment-price`, `POST /api/verify-payment`. CORS for POST.
+6. **`server/game-server.js`** — `paid` flag on player object + `welcome` message. Skip persistence in `removePlayer()` for free players. Reject `buy_upgrade` for free players.
+7. **`client/index.html`** — mobile heal bar restructured to 50/50 flex row (heal + save/store). Save button CSS with pulse animation. Save overlay modal. Mobile nudge div. Remove shop button from mobile HUD. Tutorial gets one extra line.
+8. **`client/game.js`** — import wallet.js. Handle `isPaid` state from welcome message. Save button click handler (full payment flow). Pulse intensity updates in render loop. Nudge visibility logic. Block shop for free players.
+
+#### $ROACH Token (Clanker)
+- Deployed separately via Clanker on Farcaster
+- **90% treasury** — locked in the game, no withdraw affordance currently. Can migrate to true on-chain contract later if successful.
+- **10% float** — public liquidity on Clanker/Base
+- Manual weekly payouts by operator (query `payment_log` for paid wallets, send $ROACH)
+- Automated payouts deferred to future milestone
+
+#### Config / Env Vars
+- `PAYMENT_RECIPIENT_ADDRESS` — Base wallet receiving USDC (required)
+- `BASE_RPC_URL` — optional, defaults to `https://mainnet.base.org`
+- `DATABASE_URL` — already required (Postgres)
 
 ---
 
@@ -306,7 +361,7 @@ M1 (Deploy)      -- DONE  -- Server is deploy-ready, Railway-compatible
 M2 (Visual)      -- DONE  -- Sprites scaled, VFX, prospector NPC, heal hints
 M3 (Sound)       -- DONE  -- 7 SFX, AudioManager, mobile unlock, mute
 M4 (Mobile)      -- DONE  -- Joystick, tap-stomp, responsive layout, mobile HUD
-M5 (Persistence) -- DONE  -- SQLite, session tokens, reconnection, graceful shutdown
+M5 (Persistence) -- DONE  -- Postgres (migrated from SQLite PR#16), session tokens, reconnection, graceful shutdown
 M6 (Upgrades)    -- DONE  -- Persistent progression + bank-first shop + modal store UX
 ```
 
@@ -316,7 +371,7 @@ M6 (Upgrades)    -- DONE  -- Persistent progression + bank-first shop + modal st
 ```
 M7 (Miniapps)     -- NOT STARTED  -- Farcaster/Base (primary), World (stretch)
 M8 (Agents)       -- NOT STARTED  -- Protocol is ready, needs SDK/docs
-M9 (Crypto)       -- NOT STARTED  -- Can proceed now that M6 is complete
+M9 (Crypto)       -- NOT STARTED  -- Freemium USDC gate + "Save Game" UX, RainbowKit, depends on M7
 ```
 
 ### Bonus Work Completed (not in original milestones)
