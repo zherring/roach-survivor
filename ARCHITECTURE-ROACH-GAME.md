@@ -282,7 +282,7 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 ---
 
 ### M9: Crypto Integration — "Save Game" -- NOT STARTED
-**Goal:** Freemium USDC payment gate on Base. Everyone plays free (ephemeral sessions). Paying with USDC unlocks persistence + the upgrade shop. $ROACH token deployed separately via Clanker; payouts are manual/weekly.
+**Goal:** Freemium USDC payment gate on Base. Everyone plays free (ephemeral sessions). Paying with USDC unlocks persistence + the upgrade shop. $ROACH token is team-deployed on Base; payouts are manual/weekly.
 **Effort:** 2-3 focused sessions
 **Blocked by:** M7 (wallet provider abstraction). M5/M6 persistence and upgrades are the foundation.
 **Note:** DB migrated to Postgres (PR #16). All DB methods are async `pool.query()` with `$N` params. Schema changes via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `initDB()`.
@@ -339,10 +339,10 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 7. **`client/index.html`** — mobile heal bar restructured to 50/50 flex row (heal + save/store). Save button CSS with pulse animation. Save overlay modal. Mobile nudge div. Remove shop button from mobile HUD. Tutorial gets one extra line.
 8. **`client/game.js`** — import wallet.js. Handle `isPaid` state from welcome message. Save button click handler (full payment flow). Pulse intensity updates in render loop. Nudge visibility logic. Block shop for free players.
 
-#### $ROACH Token (Clanker)
-- Deployed separately via Clanker on Farcaster
-- **90% treasury** — locked in the game, no withdraw affordance currently. Can migrate to true on-chain contract later if successful.
-- **10% float** — public liquidity on Clanker/Base
+#### $ROACH Token (Team-Deployed)
+- Deployed directly by the team on Base (not via Clanker)
+- **90% treasury** — held in a 2/3 multisig and streamed over 1 month via Hedgey (manual setup in v1)
+- **10% float** — public liquidity seeded manually with custom LP parameters
 - Manual weekly payouts by operator (query `payment_log` for paid wallets, send $ROACH)
 - Automated payouts deferred to future milestone
 

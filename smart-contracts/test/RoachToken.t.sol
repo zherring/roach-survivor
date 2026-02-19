@@ -10,8 +10,8 @@ contract RoachTokenTest is Test {
 
         RoachToken token = new RoachToken(holder);
 
-        assertEq(token.totalSupply(), RoachToken.INITIAL_SUPPLY());
-        assertEq(token.balanceOf(holder), RoachToken.INITIAL_SUPPLY());
+        assertEq(token.totalSupply(), token.INITIAL_SUPPLY());
+        assertEq(token.balanceOf(holder), token.INITIAL_SUPPLY());
     }
 
     function testRevertsOnZeroAddressMintRecipient() external {

@@ -33,6 +33,12 @@ export PRIVATE_KEY=0x...
 export MINT_TO=0x...
 ```
 
+Recommended `MINT_TO` for this project:
+- Use your **2/3 multisig** as `MINT_TO` (do not mint to a single EOA)
+- After deploy, execute treasury ops manually:
+  - Seed **10%** into LP with your preferred custom liquidity config
+  - Keep **90%** in treasury custody and set up the planned **1-month Hedgey stream**
+
 Dry run:
 
 ```bash
