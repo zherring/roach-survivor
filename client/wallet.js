@@ -82,7 +82,7 @@ export async function connectWallet() {
   }
 
   // #region agent log
-  fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:connectWallet',message:'EIP1193 provider type',data:{platformType:platform.type,providerType:typeof eip1193,providerMethods:Object.keys(eip1193).slice(0,20),hasRequest:typeof eip1193.request},timestamp:Date.now(),hypothesisId:'H1-provider-capabilities'})}).catch(()=>{});
+  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:connectWallet',message:'EIP1193 provider type',data:{platformType:platform.type,providerType:typeof eip1193,hasRequest:typeof eip1193.request},timestamp:Date.now(),hypothesisId:'H1',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   const provider = new lib.BrowserProvider(eip1193);
@@ -91,7 +91,7 @@ export async function connectWallet() {
   const network = await provider.getNetwork();
 
   // #region agent log
-  fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:connectWallet:network',message:'Network after connect',data:{chainId:Number(network.chainId),networkName:network.name,expectedChainId:BASE_CHAIN_ID},timestamp:Date.now(),hypothesisId:'H2-chain-mismatch'})}).catch(()=>{});
+  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:connectWallet:network',message:'Network after connect',data:{chainId:Number(network.chainId),networkName:network.name,expectedChainId:BASE_CHAIN_ID},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   if (Number(network.chainId) !== BASE_CHAIN_ID) {
@@ -154,32 +154,23 @@ export async function sendUSDCPayment(recipientAddress, amountUSDC, walletContex
   const senderAddress = wallet.address || (await signer.getAddress()).toLowerCase();
 
   // #region agent log
-  fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:preBalance',message:'About to call balanceOf',data:{senderAddress,usdcContract:USDC_CONTRACT_ADDRESS,providerType:typeof provider,providerConstructorName:provider?.constructor?.name},timestamp:Date.now(),hypothesisId:'H1-provider-capabilities'})}).catch(()=>{});
+  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:preBalance',message:'About to call balanceOf via public RPC',data:{senderAddress,usdcContract:USDC_CONTRACT_ADDRESS,platformType:platform.type},timestamp:Date.now(),hypothesisId:'H1-fix',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
-  // #region agent log — test raw eth_call to check H1 & H4
-  let rawCallResult = 'not_attempted';
-  try {
-    rawCallResult = await provider.call({to: USDC_CONTRACT_ADDRESS, data: '0x70a08231000000000000000000000000' + senderAddress.replace('0x','')});
-    fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:rawCall',message:'Raw eth_call result',data:{rawCallResult,resultType:typeof rawCallResult},timestamp:Date.now(),hypothesisId:'H1-provider-capabilities'})}).catch(()=>{});
-  } catch (rawErr) {
-    fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:rawCallError',message:'Raw eth_call FAILED',data:{error:rawErr?.message,code:rawErr?.code,dataField:rawErr?.data},timestamp:Date.now(),hypothesisId:'H1-provider-capabilities'})}).catch(()=>{});
-  }
-  // #endregion
-
-  const readOnlyUsdc = new lib.Contract(USDC_CONTRACT_ADDRESS, USDC_ABI, provider);
+  const readProvider = new lib.JsonRpcProvider('https://mainnet.base.org', BASE_CHAIN_ID);
+  const readOnlyUsdc = new lib.Contract(USDC_CONTRACT_ADDRESS, USDC_ABI, readProvider);
   let balance;
   try {
     balance = await readOnlyUsdc.balanceOf(senderAddress);
   } catch (balErr) {
     // #region agent log
-    fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:balanceError',message:'balanceOf FAILED',data:{error:balErr?.message,code:balErr?.code,dataField:balErr?.data,reason:balErr?.reason,rawCallResult},timestamp:Date.now(),hypothesisId:'H1-provider-capabilities'})}).catch(()=>{});
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:balanceError',message:'balanceOf FAILED even with public RPC',data:{error:balErr?.message,code:balErr?.code},timestamp:Date.now(),hypothesisId:'H1-fix',runId:'post-fix'})}).catch(()=>{});
     // #endregion
     throw balErr;
   }
 
   // #region agent log
-  fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:balanceOk',message:'balanceOf succeeded',data:{balance:balance?.toString(),senderAddress},timestamp:Date.now(),hypothesisId:'H1-provider-capabilities'})}).catch(()=>{});
+  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:balanceOk',message:'balanceOf succeeded',data:{balance:balance?.toString(),senderAddress},timestamp:Date.now(),hypothesisId:'H1-fix',runId:'post-fix'})}).catch(()=>{});
   // #endregion
 
   if (balance < amountUnits) {

@@ -132,6 +132,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // #region agent log — debug relay endpoint
+  if (urlPath === '/api/debug-log' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      try { fs.appendFileSync(path.join(__dirname, '..', '.cursor', 'debug-5be6bb.log'), body + '\n'); } catch {}
+      res.writeHead(200, apiHeaders);
+      res.end('ok');
+    });
+    return;
+  }
+  // #endregion
+
   // GET /api/wallet-paid-status — check whether wallet already owns a paid account
   if (urlPath === '/api/wallet-paid-status' && req.method === 'GET') {
     if (rejectCrossOrigin(req, res)) return;

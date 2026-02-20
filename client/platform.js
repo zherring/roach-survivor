@@ -134,7 +134,7 @@ class Platform {
         try {
           const provider = await this.sdk.wallet.getEthereumProvider();
           // #region agent log
-          fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'platform.js:getWalletProvider',message:'Farcaster getEthereumProvider result',data:{hasProvider:!!provider,providerType:typeof provider,providerKeys:provider?Object.keys(provider).slice(0,20):[],hasRequest:provider?typeof provider.request:'N/A'},timestamp:Date.now(),hypothesisId:'H3-provider-init'})}).catch(()=>{});
+          fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'platform.js:getWalletProvider',message:'Farcaster getEthereumProvider result',data:{hasProvider:!!provider,providerType:typeof provider},timestamp:Date.now(),hypothesisId:'H3',runId:'post-fix'})}).catch(()=>{});
           // #endregion
           if (provider) return provider;
         } catch (e) {
@@ -144,7 +144,7 @@ class Platform {
 
       if (this.sdk.wallet.ethProvider) {
         // #region agent log
-        fetch('http://127.0.0.1:7309/ingest/fa0e0030-c27e-4a3e-b67d-b2a351d6c4d9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5be6bb'},body:JSON.stringify({sessionId:'5be6bb',location:'platform.js:getWalletProvider:fallback',message:'Using fallback ethProvider',data:{hasEthProvider:true},timestamp:Date.now(),hypothesisId:'H3-provider-init'})}).catch(()=>{});
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'platform.js:getWalletProvider:fallback',message:'Using fallback ethProvider',data:{hasEthProvider:true},timestamp:Date.now(),hypothesisId:'H3',runId:'post-fix'})}).catch(()=>{});
         // #endregion
         return this.sdk.wallet.ethProvider;
       }
