@@ -183,6 +183,9 @@ const bankedEl = document.getElementById('banked');
 const mobileBalanceEl = document.getElementById('m-balance');
 const mobileBankedEl = document.getElementById('m-banked');
 const shopModal = document.getElementById('shop-modal');
+const lbModal = document.getElementById('leaderboard-modal');
+const lbBtn = document.getElementById('lb-btn');
+const lbCloseBtn = document.getElementById('leaderboard-close');
 const shopPanelEl = document.getElementById('shop-panel');
 const openShopBtn = document.getElementById('open-shop-btn');
 const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
@@ -1117,7 +1120,7 @@ function renderLeaderboard(data) {
 // ==================== UI ====================
 function updateUI() {
   aliveTime = (Date.now() - lastAliveReset) / 1000;
-  balanceEl.textContent = Math.floor(balance);
+  balanceEl.textContent = balance.toFixed(1);
   bankedEl.textContent = Math.floor(bankedBalance);
   document.getElementById('alive-time').textContent = Math.floor(aliveTime) + 's';
   document.getElementById('kills').textContent = kills;
@@ -1146,7 +1149,7 @@ function updateUI() {
   // Mobile HUD
   const mBalance = document.getElementById('m-balance');
   if (mBalance) {
-    mBalance.textContent = Math.floor(balance);
+    mBalance.textContent = balance.toFixed(1);
     if (mobileBankedEl) mobileBankedEl.textContent = Math.floor(bankedBalance);
     const mHpVal = myRoachData ? (myRoachData.hp % 1 === 0 ? myRoachData.hp : myRoachData.hp.toFixed(1)) : '?';
     document.getElementById('m-hp').textContent = `${mHpVal}/${BASE_HP}`;
@@ -1774,11 +1777,13 @@ function tryLocalStomp(x, y) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     setShopModalOpen(false);
+    lbModal?.classList.remove('visible');
     return;
   }
 
   const k = e.key.toLowerCase();
-  if (shopModal && shopModal.classList.contains('visible')) {
+  if ((shopModal && shopModal.classList.contains('visible')) ||
+      (lbModal && lbModal.classList.contains('visible'))) {
     if (k in keys || e.key === ' ') {
       e.preventDefault();
     }
@@ -1839,6 +1844,11 @@ for (const tabBtn of shopCategoryTabBtns) {
 }
 shopModal?.addEventListener('click', (e) => {
   if (e.target === shopModal) setShopModalOpen(false);
+});
+lbBtn?.addEventListener('click', () => lbModal?.classList.toggle('visible'));
+lbCloseBtn?.addEventListener('click', () => lbModal?.classList.remove('visible'));
+lbModal?.addEventListener('click', (e) => {
+  if (e.target === lbModal) lbModal.classList.remove('visible');
 });
 document.querySelectorAll('#upgrade-shop .upgrade-item').forEach((item) => {
   const key = item.dataset.upgrade || null;
