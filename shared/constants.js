@@ -16,7 +16,9 @@ export const GRID_SIZE = 3; // 3x3 room grid
 
 export const STOMP_COOLDOWN = 200; // ms
 export const HEAL_COST = 1;
-export const MAX_HP = 2;
+export const MAX_HP = 2; // kept for reference but no longer a hard cap during play
+export const BASE_HP = 2; // HP decays back toward this value
+export const HP_DECAY_RATE = 1 / 3; // 1 HP lost per 3 seconds when above BASE_HP
 export const DEATH_PENALTY = 0.9; // lose 90% of balance
 export const KILL_REWARD = 0.9; // gain 90% of victim's balance
 export const INCOME_RATE = 0.01; // $0.01 per second per roach
