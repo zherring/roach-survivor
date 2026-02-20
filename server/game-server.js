@@ -88,6 +88,9 @@ export class GameServer {
     this.sessionSaveTimer = 0;
     this.leaderboardCache = [];
     this.leaderboardTimer = 0;
+    this.sessionSaveInFlight = false;
+    this.leaderboardRefreshInFlight = false;
+    this.tickInterval = null;
 
     // Create 3x3 grid
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -112,8 +115,21 @@ export class GameServer {
   }
 
   start() {
-    setInterval(() => this.tick(), TICK_RATE);
+    this.tickInterval = setInterval(() => {
+      try {
+        this.tick();
+      } catch (err) {
+        console.error('Tick error:', err?.stack || err?.message || err);
+      }
+    }, TICK_RATE);
     console.log(`Game server started: ${GRID_SIZE}x${GRID_SIZE} grid, ${TICK_RATE}ms tick`);
+  }
+
+  stop() {
+    if (this.tickInterval) {
+      clearInterval(this.tickInterval);
+      this.tickInterval = null;
+    }
   }
 
   async addPlayer(ws, reconnectToken = null, platformInfo = null) {
@@ -452,16 +468,31 @@ export class GameServer {
     this.sessionSaveTimer++;
     if (this.sessionSaveTimer >= 200) {
       this.sessionSaveTimer = 0;
-      this.saveSessions().catch(err => console.error('DB session save error:', err.message));
+      if (!this.sessionSaveInFlight) {
+        this.sessionSaveInFlight = true;
+        this.saveSessions()
+          .catch(err => console.error('DB session save error:', err.message))
+          .finally(() => {
+            this.sessionSaveInFlight = false;
+          });
+      }
     }
 
     // Refresh leaderboard cache every 100 ticks (~5s)
     this.leaderboardTimer++;
     if (this.leaderboardTimer >= 100) {
       this.leaderboardTimer = 0;
-      db.getLeaderboard(20).then(rows => {
-        this.leaderboardCache = rows;
-      }).catch(err => console.error('DB leaderboard error:', err.message));
+      if (!this.leaderboardRefreshInFlight) {
+        this.leaderboardRefreshInFlight = true;
+        db.getLeaderboard(20)
+          .then(rows => {
+            this.leaderboardCache = rows;
+          })
+          .catch(err => console.error('DB leaderboard error:', err.message))
+          .finally(() => {
+            this.leaderboardRefreshInFlight = false;
+          });
+      }
     }
 
     // Adjust bots every ~60 ticks (3 seconds)
