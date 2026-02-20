@@ -1064,6 +1064,53 @@
     #log .death { color: #f00; }
     #log .money { color: #ff0; }
 
+    /* ==================== LEADERBOARD ==================== */
+    #leaderboard-section {
+      background: #0a0a0a;
+      border: 1px solid #333;
+      padding: 8px;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    #leaderboard-label {
+      color: #f0c040;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    #leaderboard-info {
+      display: flex;
+      justify-content: space-between;
+      color: #666;
+      font-size: 10px;
+      margin-bottom: 6px;
+    }
+    #lb-payout { color: #f0c040; }
+    #lb-reset { color: #f44; }
+    #leaderboard-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: monospace;
+      font-size: 10px;
+    }
+    #leaderboard-table th {
+      color: #888;
+      text-align: left;
+      border-bottom: 1px solid #333;
+      padding: 2px 4px;
+      font-weight: normal;
+    }
+    #leaderboard-table th:last-child { text-align: right; }
+    #leaderboard-table td {
+      color: #ccc;
+      padding: 2px 4px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    #leaderboard-table td:last-child { text-align: right; color: #ff0; }
+    #leaderboard-table tr.me td { color: #0ff; font-weight: bold; }
+    #leaderboard-table tr.me td:last-child { color: #0ff; }
+
     /* ==================== TUTORIAL OVERLAY ==================== */
     #tutorial-overlay {
       position: fixed;
@@ -1207,9 +1254,9 @@
       <div id="player-count"></div>
 
       <div id="stats">
-        <div class="stat">$ROACH: <span id="balance">0.00</span></div>
-        <div class="stat" id="banked-display">BANKED: <span id="banked">0.00</span></div>
-        <div class="stat">HP: <span id="player-hp">2</span>/2 <button id="heal-btn">Heal ($1)</button></div>
+        <div class="stat">$ROACH: <span id="balance">0</span></div>
+        <div class="stat" id="banked-display">BANKED: <span id="banked">0</span></div>
+        <div class="stat">HP: <span id="player-hp">2</span>/2 <button id="heal-btn">Heal (10 $ROACH)</button></div>
         <div class="stat">Alive: <span id="alive-time">0s</span></div>
         <div class="stat">Kills: <span id="kills">0</span></div>
         <div class="stat">Room: <span id="current-room">1,1</span></div>
@@ -1221,7 +1268,7 @@
       <div id="controls">
         <kbd>Click</kbd> stomp<br>
         <kbd>WASD</kbd> steer roach<br>
-        <kbd>Space</kbd> heal ($1)<br>
+        <kbd>Space</kbd> heal (10 $ROACH)<br>
         Walk off edges to change rooms<br>
         Enter <span style="color:#f0c040">MOTEL</span> to bank $ROACH
       </div>
@@ -1233,11 +1280,11 @@
       <div id="mobile-hud">
         <div class="hud-group">
           <span class="hud-label">$ROACH</span>
-          <span class="hud-value" id="m-balance">0.00</span>
+          <span class="hud-value" id="m-balance">0</span>
         </div>
         <div class="hud-group">
           <span class="hud-label">Banked</span>
-          <span class="hud-value banked" id="m-banked">0.00</span>
+          <span class="hud-value banked" id="m-banked">0</span>
         </div>
         <div class="hud-group">
           <span class="hud-label">HP</span>
@@ -1264,7 +1311,7 @@
 
       <!-- Mobile heal bar — directly under game (shown on mobile only via CSS) -->
       <div id="mobile-heal-bar">
-        <button id="mobile-heal-btn">HEAL $1</button>
+        <button id="mobile-heal-btn">HEAL 10</button>
       </div>
 
       <!-- Mobile minimap — below heal bar (shown on mobile only via CSS) -->
@@ -1276,10 +1323,21 @@
       </div>
     </div>
 
-    <!-- RIGHT PANEL: event feed -->
+    <!-- RIGHT PANEL: event feed + leaderboard -->
     <div id="right-panel">
       <div id="log-label">Feed</div>
       <div id="log"></div>
+      <div id="leaderboard-section">
+        <div id="leaderboard-label">Weekly Leaderboard</div>
+        <div id="leaderboard-info">
+          <span id="lb-payout">Payout: Sunday</span>
+          <span id="lb-reset"></span>
+        </div>
+        <table id="leaderboard-table">
+          <thead><tr><th>#</th><th>Name</th><th>$ROACH</th></tr></thead>
+          <tbody id="leaderboard-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 

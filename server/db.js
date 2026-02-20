@@ -163,6 +163,17 @@ const db = {
     );
   },
 
+  async getLeaderboard(limit = 20) {
+    const { rows } = await pool.query(
+      `SELECT name, banked_balance FROM players
+       WHERE banked_balance > 0
+       ORDER BY banked_balance DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return rows;
+  },
+
   async close() {
     if (pool) await pool.end();
   },

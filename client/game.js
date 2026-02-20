@@ -239,7 +239,7 @@ function renderUpgradeShop() {
     if (desktopBtn) {
       desktopBtn.disabled = maxed || !canAfford;
       desktopBtn.classList.toggle('maxed', maxed);
-      desktopBtn.textContent = maxed ? 'MAXED' : `Buy $${cost.toFixed(2)}`;
+      desktopBtn.textContent = maxed ? 'MAXED' : `Buy ${Math.floor(cost)} $ROACH`;
     }
 
   }
@@ -516,6 +516,7 @@ function handleMessage(msg) {
         setStompCooldownMs(msg.stompCooldown);
       }
       renderUpgradeShop();
+      if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
       break;
 
     case 'tick':
@@ -538,8 +539,8 @@ function handleMessage(msg) {
         const cashSpent = Number.isFinite(msg.usedFromCash) ? msg.usedFromCash : 0;
         log(
           `<span style="color:#8f8">${escapeHtml(def.label)} upgraded to Lv ${msg.level}</span> ` +
-          `<span class="money">-$${Number(msg.cost || 0).toFixed(2)}</span> ` +
-          `<span style="color:#f0c040">(bank $${bankSpent.toFixed(2)} + wallet $${cashSpent.toFixed(2)})</span>`
+          `<span class="money">-${Math.floor(Number(msg.cost || 0))} $ROACH</span> ` +
+          `<span style="color:#f0c040">(bank ${Math.floor(bankSpent)} + wallet ${Math.floor(cashSpent)})</span>`
         );
       }
       if (Number.isFinite(msg.balance)) {
@@ -563,7 +564,7 @@ function handleMessage(msg) {
         log(`<span style="color:#f0c040">${escapeHtml(def.label)} is already maxed.</span>`);
       } else if (msg.reason === 'insufficient_funds' && Number.isFinite(msg.cost)) {
         const have = Number.isFinite(msg.availableFunds) ? msg.availableFunds : (balance + bankedBalance);
-        log(`<span style="color:#f66">Need $${msg.cost.toFixed(2)} for ${escapeHtml(def.label)} (have $${have.toFixed(2)}).</span>`);
+        log(`<span style="color:#f66">Need ${Math.floor(msg.cost)} $ROACH for ${escapeHtml(def.label)} (have ${Math.floor(have)}).</span>`);
       }
       break;
     }
@@ -636,6 +637,9 @@ function handleTick(msg) {
   motelProgress = msg.motelProgress || 0;
   updateMotelDisplay();
 
+  // Leaderboard
+  if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+
   // Process events
   if (msg.events) {
     for (const evt of msg.events) {
@@ -682,7 +686,7 @@ function handleEvent(evt) {
       AudioManager.play('stomp_kill', 0.7);
       if (evt.stomperId === myId) {
         kills++;
-        log(`<span class="kill">KILLED roach!</span> <span class="money">+$${evt.reward.toFixed(2)}</span>`);
+        log(`<span class="kill">KILLED roach!</span> <span class="money">+${Math.floor(evt.reward)} $ROACH</span>`);
         showCoinShower(evt.x, evt.y, evt.reward);
         const killChimes = Math.max(1, Math.min(5, Math.ceil(evt.reward)));
         AudioManager.playCoins(killChimes, 0.5);
@@ -704,7 +708,7 @@ function handleEvent(evt) {
     case 'bot_kill':
       AudioManager.play('stomp_kill', 0.6);
       if (evt.victimId === myId) {
-        log(`<span class="death">HOUSE BOT killed your roach! Lost $${evt.lost.toFixed(2)}</span>`);
+        log(`<span class="death">HOUSE BOT killed your roach! Lost ${Math.floor(evt.lost)} $ROACH</span>`);
         AudioManager.play('player_dead', 0.8);
         AudioManager.playReversedCoins(3, 0.5);
         lastAliveReset = Date.now();
@@ -720,7 +724,7 @@ function handleEvent(evt) {
       break;
     case 'player_death':
       if (evt.victimId === myId) {
-        log(`<span class="death">YOU DIED! Lost $${evt.lost.toFixed(2)}</span>`);
+        log(`<span class="death">YOU DIED! Lost ${Math.floor(evt.lost)} $ROACH</span>`);
         AudioManager.play('player_dead', 0.8);
         AudioManager.playReversedCoins(3, 0.5);
         lastAliveReset = Date.now();
@@ -732,7 +736,7 @@ function handleEvent(evt) {
       break;
     case 'bank':
       if (evt.playerId === myId) {
-        log(`<span style="color:#f0c040">BANKED $${evt.amount.toFixed(2)}! Total: $${evt.totalBanked.toFixed(2)}</span>`);
+        log(`<span style="color:#f0c040">BANKED ${Math.floor(evt.amount)} $ROACH! Total: ${Math.floor(evt.totalBanked)} $ROACH</span>`);
         AudioManager.play('bank', 0.7);
         const bankChimes = Math.max(1, Math.min(5, Math.ceil(evt.amount)));
         AudioManager.playCoins(bankChimes, 0.45);
@@ -1063,11 +1067,58 @@ function updateMotelDisplay() {
   }
 }
 
+// ==================== LEADERBOARD ====================
+function renderLeaderboard(data) {
+  const tbody = document.getElementById('leaderboard-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:#666;text-align:center;padding:8px">No banked scores yet</td></tr>';
+  } else {
+    for (let i = 0; i < data.length; i++) {
+      const entry = data[i];
+      const tr = document.createElement('tr');
+      if (entry.name === myName) tr.className = 'me';
+      const rankTd = document.createElement('td');
+      rankTd.textContent = i + 1;
+      const nameTd = document.createElement('td');
+      nameTd.textContent = entry.name;
+      const ptsTd = document.createElement('td');
+      ptsTd.textContent = Math.floor(entry.banked_balance).toLocaleString();
+      tr.appendChild(rankTd);
+      tr.appendChild(nameTd);
+      tr.appendChild(ptsTd);
+      tbody.appendChild(tr);
+    }
+  }
+  // Update reset countdown
+  const resetEl = document.getElementById('lb-reset');
+  if (resetEl) {
+    const now = new Date();
+    const day = now.getUTCDay();
+    const daysUntilSunday = day === 0 ? 0 : 7 - day;
+    const nextSunday = new Date(now);
+    nextSunday.setUTCDate(now.getUTCDate() + daysUntilSunday);
+    nextSunday.setUTCHours(23, 59, 0, 0);
+    const diff = nextSunday - now;
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
+    const remainHours = hours % 24;
+    if (days === 0 && remainHours <= 1) {
+      resetEl.textContent = 'Payout soon!';
+      resetEl.style.color = '#0f0';
+    } else {
+      resetEl.textContent = `Resets in ${days}d ${remainHours}h`;
+      resetEl.style.color = '#f44';
+    }
+  }
+}
+
 // ==================== UI ====================
 function updateUI() {
   aliveTime = (Date.now() - lastAliveReset) / 1000;
-  balanceEl.textContent = balance.toFixed(2);
-  bankedEl.textContent = bankedBalance.toFixed(2);
+  balanceEl.textContent = Math.floor(balance);
+  bankedEl.textContent = Math.floor(bankedBalance);
   document.getElementById('alive-time').textContent = Math.floor(aliveTime) + 's';
   document.getElementById('kills').textContent = kills;
   document.getElementById('current-room').textContent = currentRoom;
@@ -1094,8 +1145,8 @@ function updateUI() {
   // Mobile HUD
   const mBalance = document.getElementById('m-balance');
   if (mBalance) {
-    mBalance.textContent = balance.toFixed(2);
-    if (mobileBankedEl) mobileBankedEl.textContent = bankedBalance.toFixed(2);
+    mBalance.textContent = Math.floor(balance);
+    if (mobileBankedEl) mobileBankedEl.textContent = Math.floor(bankedBalance);
     document.getElementById('m-hp').textContent = myRoachData ? `${myRoachData.hp}/${MAX_HP}` : `?/${MAX_HP}`;
     document.getElementById('m-kills').textContent = kills;
     const mHealBtn = document.getElementById('mobile-heal-btn');
@@ -1228,7 +1279,7 @@ function showHealEffect() {
       hpEl.style.transition = 'all 0.3s ease-out';
     }, 300);
 
-    log(`<span style="color:#0f0">Healed! -$${HEAL_COST}</span>`);
+    log(`<span style="color:#0f0">Healed! -${HEAL_COST} $ROACH</span>`);
   }, 350);
 }
 
@@ -1242,7 +1293,7 @@ function showBankEffect(amount, total) {
   // 2. Big "BANKED!" text rising from player
   const banner = document.createElement('div');
   banner.className = 'bank-banner';
-  banner.innerHTML = `BANKED!<br><span style="font-size:0.6em">$${amount.toFixed(2)}</span>`;
+  banner.innerHTML = `BANKED!<br><span style="font-size:0.6em">${Math.floor(amount)} $ROACH</span>`;
   banner.style.left = (predictedX + ROACH_WIDTH / 2) + 'px';
   banner.style.top = (predictedY - 20) + 'px';
   container.appendChild(banner);
@@ -1343,7 +1394,7 @@ function showBankEffect(amount, total) {
   setTimeout(() => {
     const totalEl = document.createElement('div');
     totalEl.className = 'bank-total';
-    totalEl.textContent = `Total: $${total.toFixed(2)}`;
+    totalEl.textContent = `Total: ${Math.floor(total)} $ROACH`;
     totalEl.style.left = (predictedX + ROACH_WIDTH / 2) + 'px';
     totalEl.style.top = (predictedY - 50) + 'px';
     container.appendChild(totalEl);
@@ -1432,7 +1483,7 @@ function showCoinShower(x, y, reward) {
   if (reward > 0.01) {
     const label = document.createElement('div');
     label.className = 'coin big';
-    label.textContent = '+$' + reward.toFixed(2);
+    label.textContent = '+' + Math.floor(reward) + ' $ROACH';
     label.style.left = (x - 20) + 'px';
     label.style.top = (y - 10) + 'px';
     label.style.fontSize = (14 + killCombo * 3) + 'px';
@@ -1467,7 +1518,7 @@ function showCoinShower(x, y, reward) {
   }
 
   if (reward > 0.01) {
-    flyToBalance(flyStartX, flyStartY - 8, '+$' + reward.toFixed(2), {
+    flyToBalance(flyStartX, flyStartY - 8, '+' + Math.floor(reward) + ' $ROACH', {
       big: true,
       delay: 120,
       duration: 1000,
