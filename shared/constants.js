@@ -209,3 +209,25 @@ export function getWallBounceStrength(level) {
   const clamped = clampUpgradeLevel('wallBounce', level);
   return 0.5 + Math.min(2, clamped * 0.04);
 }
+
+// ==================== PAYMENT / FREEMIUM ====================
+export const BASE_CHAIN_ID = 8453;
+export const USDC_DECIMALS = 6;
+// USDC on Base mainnet
+export const USDC_CONTRACT_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+// Dynamic pricing tiers: { threshold: cumulative paid player count, price: USDC }
+export const PRICING_TIERS = Object.freeze([
+  { threshold: 10,       price: 0.01 },
+  { threshold: 35,       price: 0.25 },
+  { threshold: 135,      price: 1.00 },
+  { threshold: 235,      price: 2.50 },
+  { threshold: Infinity, price: 5.00 },
+]);
+
+export function getPriceForPlayerCount(paidCount) {
+  for (const tier of PRICING_TIERS) {
+    if (paidCount < tier.threshold) return tier.price;
+  }
+  return PRICING_TIERS[PRICING_TIERS.length - 1].price;
+}

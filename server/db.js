@@ -33,6 +33,11 @@ async function initDB() {
       shell_armor_level INTEGER DEFAULT 0,
       platform_type TEXT DEFAULT NULL,
       platform_id TEXT DEFAULT NULL,
+      paid_account BOOLEAN DEFAULT FALSE,
+      paid_at BIGINT DEFAULT NULL,
+      wallet_address TEXT DEFAULT NULL,
+      paid_amount DOUBLE PRECISION DEFAULT NULL,
+      payment_tx_hash TEXT DEFAULT NULL,
       created_at BIGINT NOT NULL,
       last_seen BIGINT NOT NULL
     );
@@ -45,9 +50,75 @@ async function initDB() {
       hp INTEGER DEFAULT 2,
       updated_at BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS payments (
+      id SERIAL PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      tx_hash TEXT NOT NULL UNIQUE,
+      amount_usdc DOUBLE PRECISION NOT NULL,
+      chain_id INTEGER NOT NULL,
+      from_address TEXT,
+      verified_at BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS payment_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      paid_player_count INTEGER NOT NULL DEFAULT 0,
+      updated_at BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS payment_log (
+      id SERIAL PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      tx_hash TEXT NOT NULL UNIQUE,
+      amount_usdc DOUBLE PRECISION NOT NULL,
+      chain_id INTEGER NOT NULL,
+      from_address TEXT NOT NULL,
+      recipient_address TEXT NOT NULL,
+      verified_at BIGINT NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions (updated_at);
     CREATE INDEX IF NOT EXISTS idx_players_platform ON players (platform_type, platform_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_tx_hash ON payments (tx_hash);
+    CREATE INDEX IF NOT EXISTS idx_payment_log_tx_hash ON payment_log (tx_hash);
+    CREATE INDEX IF NOT EXISTS idx_payment_log_player_id ON payment_log (player_id);
   `);
+
+  // Migration: add paid_account column if it doesn't exist (for existing DBs)
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE players ADD COLUMN paid_account BOOLEAN DEFAULT FALSE;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$;
+    DO $$ BEGIN
+      ALTER TABLE players ADD COLUMN paid_at BIGINT DEFAULT NULL;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$;
+    DO $$ BEGIN
+      ALTER TABLE players ADD COLUMN wallet_address TEXT DEFAULT NULL;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$;
+    DO $$ BEGIN
+      ALTER TABLE players ADD COLUMN paid_amount DOUBLE PRECISION DEFAULT NULL;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$;
+    DO $$ BEGIN
+      ALTER TABLE players ADD COLUMN payment_tx_hash TEXT DEFAULT NULL;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$;
+  `);
+
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS idx_players_payment_tx_hash ON players (payment_tx_hash)'
+  );
+
+  await pool.query(
+    `INSERT INTO payment_config (id, paid_player_count, updated_at)
+     VALUES (
+       1,
+       (SELECT COUNT(*)::INTEGER FROM players WHERE paid_account = TRUE),
+       $1
+     )
+     ON CONFLICT (id) DO NOTHING`,
+    [Date.now()]
+  );
 }
 
 const db = {
@@ -156,11 +227,115 @@ const db = {
     return rows[0] || null;
   },
 
+  async getPaidPlayerByWallet(walletAddress) {
+    const normalized = typeof walletAddress === 'string' ? walletAddress.trim().toLowerCase() : '';
+    if (!normalized) return null;
+    const { rows } = await pool.query(
+      `SELECT *
+       FROM players
+       WHERE paid_account = TRUE
+         AND wallet_address IS NOT NULL
+         AND lower(wallet_address) = $1
+       ORDER BY paid_at DESC NULLS LAST, created_at DESC
+       LIMIT 1`,
+      [normalized]
+    );
+    return rows[0] || null;
+  },
+
   async linkPlatform(playerId, platformType, platformId) {
     await pool.query(
       'UPDATE players SET platform_type = $1, platform_id = $2, last_seen = $3 WHERE id = $4',
       [platformType, platformId, Date.now(), playerId]
     );
+  },
+
+  async markPaid(playerId, {
+    txHash,
+    amountUsdc,
+    chainId,
+    fromAddress,
+    recipientAddress,
+    walletAddress,
+  }) {
+    const now = Date.now();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const existing = await client.query(
+        'SELECT paid_account FROM players WHERE id = $1 FOR UPDATE',
+        [playerId]
+      );
+      if (!existing.rows[0]) {
+        throw new Error('Player not found');
+      }
+      if (existing.rows[0].paid_account) {
+        const countResult = await client.query(
+          'SELECT paid_player_count FROM payment_config WHERE id = 1'
+        );
+        await client.query('COMMIT');
+        return {
+          alreadyPaid: true,
+          paidCount: Number(countResult.rows[0]?.paid_player_count || 0),
+        };
+      }
+
+      await client.query(
+        `UPDATE players
+         SET paid_account = TRUE, paid_at = $1, last_seen = $1,
+             wallet_address = $2, paid_amount = $3, payment_tx_hash = $4
+         WHERE id = $5`,
+        [now, walletAddress || null, amountUsdc, txHash, playerId]
+      );
+      await client.query(
+        `INSERT INTO payment_log (player_id, tx_hash, amount_usdc, chain_id, from_address, recipient_address, verified_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [playerId, txHash, amountUsdc, chainId, fromAddress, recipientAddress, now]
+      );
+      // Legacy table kept for backward compatibility with existing scripts.
+      await client.query(
+        `INSERT INTO payments (player_id, tx_hash, amount_usdc, chain_id, from_address, verified_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [playerId, txHash, amountUsdc, chainId, fromAddress, now]
+      );
+      const countResult = await client.query(
+        `UPDATE payment_config
+         SET paid_player_count = paid_player_count + 1, updated_at = $1
+         WHERE id = 1
+         RETURNING paid_player_count`,
+        [now]
+      );
+      await client.query('COMMIT');
+      return {
+        alreadyPaid: false,
+        paidCount: Number(countResult.rows[0]?.paid_player_count || 0),
+      };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  async getPaidPlayerCount() {
+    const { rows } = await pool.query('SELECT paid_player_count FROM payment_config WHERE id = 1');
+    return Number(rows[0]?.paid_player_count || 0);
+  },
+
+  async isPaymentProcessed(txHash) {
+    const { rows } = await pool.query(
+      `SELECT 1
+       FROM payment_log
+       WHERE tx_hash = $1
+       UNION ALL
+       SELECT 1
+       FROM payments
+       WHERE tx_hash = $1
+       LIMIT 1`,
+      [txHash]
+    );
+    return rows.length > 0;
   },
 
   async close() {

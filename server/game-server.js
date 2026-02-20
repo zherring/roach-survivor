@@ -112,6 +112,7 @@ export class GameServer {
   async addPlayer(ws, reconnectToken = null, platformInfo = null) {
     let token = reconnectToken;
     let name, roomKey, bankedBalance, restored;
+    let isPaid = false;
     let upgrades = createDefaultUpgrades();
     let linkedPlatform = null;
 
@@ -131,6 +132,7 @@ export class GameServer {
       if (existing) {
         name = existing.name;
         bankedBalance = existing.banked_balance;
+        isPaid = !!existing.paid_account;
         upgrades = sanitizeUpgrades({
           bootSize: existing.boot_size_level,
           multiStomp: existing.multi_stomp_level,
@@ -193,6 +195,7 @@ export class GameServer {
       token,
       bankedBalance: bankedBalance || 0,
       upgrades,
+      isPaid: isPaid || false,
       lastStomp: 0,
       lastHeal: 0,
       cursorX: INVALID_CURSOR,
@@ -214,6 +217,7 @@ export class GameServer {
       motel: this.motel.serialize(),
       gridSize: GRID_SIZE,
       restored,
+      isPaid,
       upgrades: { ...upgrades },
       stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
       linkedPlatform: linkedPlatform || undefined,
@@ -227,8 +231,8 @@ export class GameServer {
     const player = this.players.get(playerId);
     if (!player) return;
 
-    // Save session state to DB for reconnection
-    if (player.token) {
+    // Only save session for paid players (free players lose progress on disconnect)
+    if (player.token && player.isPaid) {
       await db.updateSession(
         player.token, player.room,
         player.roach.x, player.roach.y,
@@ -307,6 +311,14 @@ export class GameServer {
         break;
       }
       case 'buy_upgrade': {
+        if (!player.isPaid) {
+          this.send(player.ws, {
+            type: 'upgrade_purchase_failed',
+            upgrade: msg.upgrade || '',
+            reason: 'not_paid',
+          });
+          break;
+        }
         const upgradeKey = sanitizeUpgradePurchaseMessage(msg);
         if (!upgradeKey) break;
 
@@ -509,6 +521,7 @@ export class GameServer {
           balance: player.roach.balance,
           banked: player.bankedBalance,
           hp: player.roach.hp,
+          isPaid: player.isPaid,
           lastInputSeq: player.roach.lastInputSeq,
           healCount: player.roach.healCount,
           upgrades: { ...player.upgrades },
@@ -559,7 +572,7 @@ export class GameServer {
     const sessions = [];
     const now = Date.now();
     for (const [, player] of this.players) {
-      if (!player.token) continue;
+      if (!player.token || !player.isPaid) continue;
       sessions.push({
         playerId: player.token,
         room: player.room,
@@ -572,6 +585,16 @@ export class GameServer {
     }
     if (sessions.length > 0) {
       await db.bulkUpdateSessions(sessions);
+    }
+  }
+
+  markPlayerPaid(playerToken) {
+    for (const [, player] of this.players) {
+      if (player.token === playerToken) {
+        player.isPaid = true;
+        this.send(player.ws, { type: 'payment_verified', isPaid: true });
+        break;
+      }
     }
   }
 
