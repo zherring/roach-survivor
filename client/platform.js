@@ -4,7 +4,7 @@
 //
 // Priority: Farcaster/Base App (primary) > World App (stretch) > standalone (fallback)
 
-const FARCASTER_SDK_URL = 'https://esm.sh/@farcaster/miniapp-sdk@latest';
+const FARCASTER_SDK_URL = 'https://esm.sh/@farcaster/miniapp-sdk@0.2.3';
 const WORLD_SDK_URL = 'https://cdn.jsdelivr.net/npm/@worldcoin/minikit-js@latest/+esm';
 
 class Platform {
@@ -13,29 +13,45 @@ class Platform {
     this.sdk = null;
     this.context = null;
     this._ready = false;
+    this._initPromise = null;
   }
 
   async init() {
+    if (this._ready) return;
+    if (this._initPromise) return this._initPromise;
+
     // Detect platform by checking environment signals
-    if (await this._tryFarcaster()) return;
-    if (await this._tryWorld()) return;
-    // Standalone fallback — no SDK needed
-    this.type = 'standalone';
-    this._ready = true;
+    this._initPromise = (async () => {
+      if (await this._tryFarcaster()) return;
+      if (await this._tryWorld()) return;
+      // Standalone fallback — no SDK needed
+      this.type = 'standalone';
+      this._ready = true;
+    })();
+
+    try {
+      await this._initPromise;
+    } finally {
+      this._initPromise = null;
+    }
   }
 
   async _tryFarcaster() {
-    // Farcaster/Base miniapp context injects signals into the page.
-    // The SDK always exports actions.ready(), so we can't use that to detect context.
-    // Instead, check sdk.context which is only populated inside a Farcaster client.
     try {
       const mod = await import(FARCASTER_SDK_URL);
-      const sdk = mod.default || mod;
+      const sdk = mod.default || mod.sdk || mod;
 
-      // sdk.context is only available when running inside a Farcaster/Base client
-      const context = sdk.context;
+      if (!sdk) return false;
+
+      if (typeof sdk.isInMiniApp === 'function') {
+        const inMiniApp = await sdk.isInMiniApp(300);
+        if (!inMiniApp) return false;
+      }
+
+      const context = await Promise.resolve(sdk.context).catch(() => null);
+
       if (!context || !context.user) {
-        return false; // SDK loaded but we're not in a miniapp context
+        return false;
       }
 
       this.sdk = sdk;
@@ -105,14 +121,29 @@ class Platform {
 
   // Returns EIP-1193 wallet provider, or null
   async getWalletProvider() {
-    if (this.type === 'farcaster' && this.sdk?.wallet?.getEthereumProvider) {
+    if (!this._ready) {
       try {
-        return await this.sdk.wallet.getEthereumProvider();
-      } catch (e) {
-        console.warn('[platform] Failed to get Farcaster wallet provider:', e);
+        await this.init();
+      } catch {
+        // Fall through to null for non-miniapp contexts.
       }
     }
-    // World App and standalone don't expose a standard EIP-1193 provider here
+
+    if (this.type === 'farcaster' && this.sdk?.wallet) {
+      if (typeof this.sdk.wallet.getEthereumProvider === 'function') {
+        try {
+          const provider = await this.sdk.wallet.getEthereumProvider();
+          if (provider) return provider;
+        } catch (e) {
+          console.warn('[platform] Failed to get Farcaster wallet provider:', e);
+        }
+      }
+
+      if (this.sdk.wallet.ethProvider) {
+        return this.sdk.wallet.ethProvider;
+      }
+    }
+
     return null;
   }
 
