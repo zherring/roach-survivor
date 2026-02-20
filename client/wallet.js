@@ -192,7 +192,13 @@ export async function sendUSDCPayment(recipientAddress, amountUSDC, walletContex
       throw new Error(detail);
     }
 
-    const receipt = await waitForReceipt(provider, result.send.transaction);
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:postSendToken',message:'sendToken succeeded, polling receipt via public RPC',data:{txHash:result.send.transaction},timestamp:Date.now(),hypothesisId:'H5-receipt',runId:'post-fix'})}).catch(()=>{});
+    // #endregion
+    const receipt = await waitForReceipt(readProvider, result.send.transaction);
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:receiptOk',message:'Receipt obtained',data:{txHash:receipt?.hash||result.send.transaction},timestamp:Date.now(),hypothesisId:'H5-receipt',runId:'post-fix'})}).catch(()=>{});
+    // #endregion
     return {
       txHash: receipt?.hash || result.send.transaction,
     };
@@ -240,6 +246,7 @@ export async function recoverPaidAccount(walletContext = null) {
       walletAddress,
       nonce: challenge.nonce,
       signature,
+      sessionId: challenge.sessionId,
     }),
   });
   const verifyBody = await verifyRes.json().catch(() => ({}));

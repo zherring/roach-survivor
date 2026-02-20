@@ -195,7 +195,7 @@ const server = http.createServer(async (req, res) => {
         res.setHeader('Set-Cookie', buildSessionCookie(req, sessionId));
       }
       res.writeHead(200, apiHeaders);
-      res.end(JSON.stringify(created.challenge));
+      res.end(JSON.stringify({ ...created.challenge, sessionId }));
     } catch (err) {
       console.error('SIWE challenge error:', err.message);
       const status = err instanceof SyntaxError ? 400 : 500;
@@ -211,7 +211,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = JSON.parse(await readBody(req));
       const cookies = parseCookies(req);
-      const sessionId = normalizeSiweSessionId(cookies[SIWE_SESSION_COOKIE_NAME]);
+      const sessionId = normalizeSiweSessionId(cookies[SIWE_SESSION_COOKIE_NAME])
+        || normalizeSiweSessionId(body?.sessionId);
       const verification = verifySiweChallenge({
         walletAddress: body?.walletAddress,
         nonce: body?.nonce,
