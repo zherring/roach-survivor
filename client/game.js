@@ -8,6 +8,15 @@ import {
   getUpgradeCost, getBootScale, getMultiStompOffsets, getStompCooldownForLevel,
 } from '/shared/constants.js';
 import { platform } from './platform.js';
+import {
+  connectWallet,
+  getPaymentPrice,
+  getWalletPaidStatus,
+  hasWallet,
+  recoverPaidAccount,
+  sendUSDCPayment,
+  verifyPaymentWithServer,
+} from './wallet.js';
 
 // ==================== AUDIO ====================
 const AudioManager = {
@@ -115,6 +124,9 @@ let lastAliveReset = Date.now();
 let upgrades = createDefaultUpgrades();
 let stompCooldownMs = getStompCooldownForLevel(0);
 let lastLocalStompAt = 0;
+let isPaid = false;
+let paymentQuote = null;
+let paymentInFlight = false;
 
 // Entity maps: id -> { data, el, prevX, prevY, prevTime }
 const roachEls = new Map();
@@ -182,6 +194,11 @@ const balanceEl = document.getElementById('balance');
 const bankedEl = document.getElementById('banked');
 const mobileBalanceEl = document.getElementById('m-balance');
 const mobileBankedEl = document.getElementById('m-banked');
+const saveGameBtn = document.getElementById('save-game-btn');
+const savePriceEl = document.getElementById('save-price');
+const mobileSaveBtn = document.getElementById('mobile-save-btn');
+const mobileSavedBadge = document.getElementById('mobile-saved-badge');
+const mobileSaveNudge = document.getElementById('mobile-save-nudge');
 const shopModal = document.getElementById('shop-modal');
 const lbModal = document.getElementById('leaderboard-modal');
 const lbBtn = document.getElementById('lb-btn');
@@ -190,6 +207,13 @@ const shopPanelEl = document.getElementById('shop-panel');
 const openShopBtn = document.getElementById('open-shop-btn');
 const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
 const closeShopBtn = document.getElementById('close-shop-btn');
+const paymentModal = document.getElementById('payment-modal');
+const paymentAmountEl = document.getElementById('payment-amount');
+const paymentStatusEl = document.getElementById('payment-status');
+const paymentNoWalletEl = document.getElementById('payment-no-wallet');
+const paymentConfirmBtn = document.getElementById('payment-confirm-btn');
+const paymentRecoverBtn = document.getElementById('payment-recover-btn');
+const paymentCancelBtn = document.getElementById('payment-cancel-btn');
 const shopCategoryTabBtns = Array.from(document.querySelectorAll('.shop-category-tab'));
 const shopCategoryColumns = Array.from(document.querySelectorAll('.upgrade-column[data-store-tab-content]'));
 const shopProspectorFaceEl = document.getElementById('shop-prospector-face');
@@ -224,6 +248,225 @@ function setStompCooldownMs(rawCooldown) {
   stompCooldownMs = Math.max(30, parsed);
 }
 
+function formatPriceLabel(value) {
+  const price = Number(value);
+  if (!Number.isFinite(price)) return '--';
+  if (price < 1) return price.toFixed(2);
+  return price % 1 === 0 ? price.toFixed(0) : price.toFixed(2);
+}
+
+function setPaymentStatus(text, type = '') {
+  if (!paymentStatusEl) return;
+  paymentStatusEl.textContent = text || '';
+  paymentStatusEl.classList.remove('error', 'success');
+  if (type) paymentStatusEl.classList.add(type);
+}
+
+function setPaymentModalOpen(isOpen) {
+  if (!paymentModal) return;
+  paymentModal.classList.toggle('visible', !!isOpen);
+  if (!isOpen) {
+    setPaymentStatus('');
+    if (!paymentInFlight) {
+      paymentConfirmBtn.disabled = false;
+      paymentRecoverBtn.disabled = false;
+      paymentCancelBtn.disabled = false;
+    }
+  }
+}
+
+function setPaymentBusy(busy) {
+  paymentInFlight = !!busy;
+  if (paymentConfirmBtn) paymentConfirmBtn.disabled = paymentInFlight;
+  if (paymentRecoverBtn) paymentRecoverBtn.disabled = paymentInFlight;
+  if (paymentCancelBtn) paymentCancelBtn.disabled = paymentInFlight;
+}
+
+function normalizeWalletActionError(err, fallback = 'Wallet action failed.') {
+  const raw = typeof err?.message === 'string' ? err.message : '';
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes('user rejected')
+    || lower.includes('user denied')
+    || lower.includes('rejected request')
+    || lower.includes('cancelled')
+  ) {
+    return 'Wallet request was canceled.';
+  }
+  return raw || fallback;
+}
+
+function applyRecoveredAccount(restoreResult) {
+  const recoveredToken = restoreResult?.token;
+  if (!recoveredToken || typeof recoveredToken !== 'string') {
+    throw new Error('Recovered account token missing.');
+  }
+
+  const tokenChanged = recoveredToken !== sessionToken;
+  sessionToken = recoveredToken;
+  localStorage.setItem('roach_session_token', recoveredToken);
+  loadOnboardingState(recoveredToken);
+
+  isPaid = true;
+  applyPaidUI();
+
+  const recoveredName = restoreResult?.name ? ` ${escapeHtml(restoreResult.name)}` : '';
+  log(`<span style="color:#8f8">Recovered paid account${recoveredName}.</span>`);
+
+  if (tokenChanged) {
+    setPaymentStatus('Paid account recovered. Reconnecting...', 'success');
+    setTimeout(() => window.location.reload(), 650);
+    return;
+  }
+
+  setPaymentStatus('Paid account recovered.', 'success');
+  setTimeout(() => setPaymentModalOpen(false), 650);
+}
+
+async function runRecoveryFlow(walletContext = null) {
+  if (paymentInFlight) return;
+  setPaymentBusy(true);
+  try {
+    setPaymentStatus('Connecting wallet...');
+    const wallet = walletContext || await connectWallet();
+    setPaymentStatus('Sign message to recover account...');
+    const restoreResult = await recoverPaidAccount(wallet);
+    applyRecoveredAccount(restoreResult);
+  } catch (err) {
+    setPaymentStatus(normalizeWalletActionError(err, 'Account recovery failed.'), 'error');
+  } finally {
+    setPaymentBusy(false);
+  }
+}
+
+function applyPaidUI() {
+  const paid = !!isPaid;
+
+  saveGameBtn?.classList.toggle('hidden', paid);
+  openShopBtn?.classList.toggle('hidden', !paid);
+  mobileSaveBtn?.classList.toggle('hidden', paid);
+  mobileOpenShopBtn?.classList.toggle('hidden', !paid);
+  mobileSavedBadge?.classList.toggle('hidden', !paid);
+
+  if (paid) {
+    saveGameBtn?.classList.add('saved');
+    if (savePriceEl) savePriceEl.textContent = 'Paid';
+    if (mobileSaveNudge) mobileSaveNudge.classList.remove('visible');
+  } else {
+    saveGameBtn?.classList.remove('saved');
+    if (savePriceEl) {
+      savePriceEl.textContent = paymentQuote ? `${formatPriceLabel(paymentQuote.price)} USDC` : 'Loading...';
+    }
+  }
+}
+
+function updateSaveIntensity() {
+  if (isPaid) return;
+  const intensity = Math.max(0, Math.min(1, balance / 5));
+  saveGameBtn?.style.setProperty('--save-intensity', intensity.toFixed(2));
+  mobileSaveBtn?.style.setProperty('--save-intensity', intensity.toFixed(2));
+  if (mobileSaveNudge) {
+    mobileSaveNudge.classList.toggle('visible', balance > 2 && !isPaid);
+  }
+}
+
+async function refreshPaymentQuote() {
+  const quote = await getPaymentPrice();
+  paymentQuote = quote;
+
+  if (savePriceEl && !isPaid) {
+    savePriceEl.textContent = `${formatPriceLabel(quote.price)} USDC`;
+  }
+  if (paymentAmountEl) {
+    paymentAmountEl.textContent = formatPriceLabel(quote.price);
+  }
+  return quote;
+}
+
+function showSavedCelebration() {
+  const el = document.createElement('div');
+  el.className = 'saved-celebration';
+  el.textContent = 'GAME SAVED';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2100);
+}
+
+async function runPaymentFlow() {
+  if (paymentInFlight || isPaid) return;
+  if (!sessionToken) {
+    setPaymentStatus('Still connecting. Try again in a second.', 'error');
+    return;
+  }
+
+  setPaymentBusy(true);
+  try {
+    setPaymentStatus('Connecting wallet...');
+    const wallet = await connectWallet();
+    const { address } = wallet;
+
+    setPaymentStatus('Checking for existing paid account...');
+    let paidStatus = null;
+    try {
+      paidStatus = await getWalletPaidStatus(address);
+    } catch (statusErr) {
+      console.warn('Wallet paid-status check failed:', statusErr);
+    }
+    if (paidStatus?.hasPaidAccount) {
+      setPaymentStatus('This wallet already has a paid account. Click Recover Account.', 'error');
+      return;
+    }
+
+    setPaymentStatus('Checking price...');
+    const quote = paymentQuote || await refreshPaymentQuote();
+    if (!quote?.recipientAddress) {
+      throw new Error('Payment recipient unavailable. Try again later.');
+    }
+
+    setPaymentStatus('Sending USDC transaction...');
+    const { txHash } = await sendUSDCPayment(quote.recipientAddress, quote.price, wallet);
+
+    setPaymentStatus('Verifying payment on-chain...');
+    await verifyPaymentWithServer({
+      txHash,
+      walletAddress: address,
+      playerId: sessionToken,
+    });
+
+    isPaid = true;
+    applyPaidUI();
+    setPaymentStatus('Payment verified. Save unlocked.', 'success');
+    log('<span style="color:#8f8">SAVE GAME purchased! Your progress now persists.</span>');
+    AudioManager.play('synth', 0.6);
+    showSavedCelebration();
+    setTimeout(() => setPaymentModalOpen(false), 650);
+  } catch (err) {
+    const message = normalizeWalletActionError(err, 'Payment failed.');
+    setPaymentStatus(message, 'error');
+  } finally {
+    setPaymentBusy(false);
+  }
+}
+
+async function openSaveFlow() {
+  if (isPaid) return;
+  setPaymentModalOpen(true);
+  setPaymentStatus('');
+  if (paymentNoWalletEl) {
+    let walletFound = false;
+    try {
+      walletFound = await hasWallet();
+    } catch {
+      walletFound = false;
+    }
+    paymentNoWalletEl.classList.toggle('hidden', walletFound);
+  }
+  try {
+    await refreshPaymentQuote();
+  } catch (err) {
+    setPaymentStatus(err?.message || 'Failed to load payment price.', 'error');
+  }
+}
+
 function renderUpgradeShop() {
   for (const key of UPGRADE_ORDER) {
     const def = UPGRADE_DEFS[key];
@@ -232,6 +475,7 @@ function renderUpgradeShop() {
     const maxed = level >= def.maxLevel;
     const cost = maxed ? 0 : getUpgradeCost(key, level);
     const canAfford = maxed || (balance + bankedBalance) >= cost;
+    const locked = !isPaid;
 
     const levelEl = document.getElementById(`level-${key}`);
     if (levelEl) {
@@ -240,15 +484,20 @@ function renderUpgradeShop() {
 
     const desktopBtn = document.getElementById(`upgrade-btn-${key}`);
     if (desktopBtn) {
-      desktopBtn.disabled = maxed || !canAfford;
+      desktopBtn.disabled = locked || maxed || !canAfford;
       desktopBtn.classList.toggle('maxed', maxed);
-      desktopBtn.textContent = maxed ? 'MAXED' : `Buy ${Math.floor(cost)} $ROACH`;
+      desktopBtn.textContent = locked ? 'SAVE GAME' : (maxed ? 'MAXED' : `Buy ${Math.floor(cost)} $ROACH`);
     }
 
   }
 }
 
 function tryPurchaseUpgrade(upgradeKey) {
+  if (!isPaid) {
+    log('<span style="color:#f0c040">Save your game first to unlock upgrades.</span>');
+    openSaveFlow();
+    return;
+  }
   const def = UPGRADE_DEFS[upgradeKey];
   if (!def) return;
   const level = upgrades[upgradeKey] || 0;
@@ -260,6 +509,10 @@ function tryPurchaseUpgrade(upgradeKey) {
 
 function setShopModalOpen(isOpen) {
   if (!shopModal) return;
+  if (isOpen && !isPaid) {
+    openSaveFlow();
+    return;
+  }
   shopModal.classList.toggle('visible', !!isOpen);
   if (isOpen) {
     setShopProspectorLine(null);
@@ -489,6 +742,7 @@ function handleMessage(msg) {
     case 'welcome':
       myId = msg.id;
       myName = msg.name;
+      isPaid = !!msg.isPaid;
       lastHealCount = 0;
       currentRoom = msg.room;
       gridSize = msg.gridSize || GRID_SIZE;
@@ -514,6 +768,10 @@ function handleMessage(msg) {
       if (msg.linkedPlatform) {
         log(`<span style="color:#ff0">Account linked to ${escapeHtml(msg.linkedPlatform)}! Your progress syncs across devices.</span>`);
       }
+      applyPaidUI();
+      if (!isPaid) {
+        refreshPaymentQuote().catch(() => {});
+      }
       applyUpgradeState(msg.upgrades);
       if (Number.isFinite(msg.stompCooldown)) {
         setStompCooldownMs(msg.stompCooldown);
@@ -534,6 +792,14 @@ function handleMessage(msg) {
       AudioManager.play('synth', 0.3);
       log(`Crawled to room ${msg.room}`);
 
+      break;
+    case 'payment_verified':
+      isPaid = !!msg.isPaid;
+      applyPaidUI();
+      if (isPaid) {
+        setPaymentStatus('Payment verified. Save unlocked.', 'success');
+        setTimeout(() => setPaymentModalOpen(false), 650);
+      }
       break;
     case 'upgrade_purchased': {
       const def = UPGRADE_DEFS[msg.upgrade];
@@ -562,6 +828,11 @@ function handleMessage(msg) {
     }
     case 'upgrade_purchase_failed': {
       const def = UPGRADE_DEFS[msg.upgrade];
+      if (msg.reason === 'not_paid') {
+        log('<span style="color:#f0c040">Save your game first to unlock upgrades.</span>');
+        openSaveFlow();
+        break;
+      }
       if (!def) break;
       if (msg.reason === 'max_level') {
         log(`<span style="color:#f0c040">${escapeHtml(def.label)} is already maxed.</span>`);
@@ -581,6 +852,10 @@ function handleTick(msg) {
   if (msg.you) {
     balance = msg.you.balance;
     bankedBalance = msg.you.banked;
+    if (typeof msg.you.isPaid === 'boolean' && msg.you.isPaid !== isPaid) {
+      isPaid = msg.you.isPaid;
+      applyPaidUI();
+    }
     lastServerSeq = msg.you.lastInputSeq;
     if (msg.you.upgrades) {
       applyUpgradeState(msg.you.upgrades);
@@ -1165,6 +1440,7 @@ function updateUI() {
   }
   document.getElementById('player-count').textContent = `Players in room: ${playerCount}`;
 
+  updateSaveIntensity();
   renderUpgradeShop();
 }
 
@@ -1777,11 +2053,16 @@ function tryLocalStomp(x, y) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     setShopModalOpen(false);
+    setPaymentModalOpen(false);
     lbModal?.classList.remove('visible');
     return;
   }
 
   const k = e.key.toLowerCase();
+  if (paymentModal && paymentModal.classList.contains('visible')) {
+    if (k in keys || e.key === ' ') e.preventDefault();
+    return;
+  }
   if ((shopModal && shopModal.classList.contains('visible')) ||
       (lbModal && lbModal.classList.contains('visible'))) {
     if (k in keys || e.key === ' ') {
@@ -1836,14 +2117,32 @@ document.getElementById('heal-btn').addEventListener('click', () => {
 document.getElementById('mobile-heal-btn')?.addEventListener('click', () => {
   send({ type: 'heal' });
 });
+saveGameBtn?.addEventListener('click', () => {
+  openSaveFlow();
+});
+mobileSaveBtn?.addEventListener('click', () => {
+  openSaveFlow();
+});
 openShopBtn?.addEventListener('click', () => setShopModalOpen(true));
 mobileOpenShopBtn?.addEventListener('click', () => setShopModalOpen(true));
 closeShopBtn?.addEventListener('click', () => setShopModalOpen(false));
+paymentCancelBtn?.addEventListener('click', () => {
+  if (!paymentInFlight) setPaymentModalOpen(false);
+});
+paymentConfirmBtn?.addEventListener('click', () => {
+  runPaymentFlow();
+});
+paymentRecoverBtn?.addEventListener('click', () => {
+  runRecoveryFlow();
+});
 for (const tabBtn of shopCategoryTabBtns) {
   tabBtn.addEventListener('click', () => setStoreTab(tabBtn.dataset.storeTab || 'boot'));
 }
 shopModal?.addEventListener('click', (e) => {
   if (e.target === shopModal) setShopModalOpen(false);
+});
+paymentModal?.addEventListener('click', (e) => {
+  if (e.target === paymentModal && !paymentInFlight) setPaymentModalOpen(false);
 });
 lbBtn?.addEventListener('click', () => lbModal?.classList.toggle('visible'));
 lbCloseBtn?.addEventListener('click', () => lbModal?.classList.remove('visible'));
@@ -2012,6 +2311,7 @@ function gameLoop() {
 
 // ==================== INIT ====================
 applyUpgradeState(upgrades);
+applyPaidUI();
 renderUpgradeShop();
 setStoreTab(currentStoreTab, true);
 setBootTransform(0);
