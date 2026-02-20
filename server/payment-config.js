@@ -3,6 +3,10 @@ const BASE_MAINNET_RPC = 'https://mainnet.base.org';
 export const BASE_CHAIN_ID = 8453;
 export const USDC_DECIMALS = 6;
 export const USDC_CONTRACT_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+export const PAYMENT_STAMPEDE_GRACE_PLAYERS = Number.parseInt(
+  process.env.PAYMENT_STAMPEDE_GRACE_PLAYERS || '25',
+  10
+);
 
 export const BASE_RPC_URL = process.env.BASE_RPC_URL || BASE_MAINNET_RPC;
 
@@ -35,6 +39,25 @@ export function getPriceForPlayerCount(paidCount) {
     if (count < tier.threshold) return tier.price;
   }
   return PRICING_TIERS[PRICING_TIERS.length - 1].price;
+}
+
+export function getGraceAdjustedPriceForPlayerCount(paidCount) {
+  const count = Number.isFinite(paidCount) ? Math.max(0, Math.floor(paidCount)) : 0;
+  const grace = Number.isFinite(PAYMENT_STAMPEDE_GRACE_PLAYERS)
+    ? Math.max(0, Math.floor(PAYMENT_STAMPEDE_GRACE_PLAYERS))
+    : 0;
+
+  let tierIndex = PRICING_TIERS.findIndex((tier) => count < tier.threshold);
+  if (tierIndex === -1) tierIndex = PRICING_TIERS.length - 1;
+  if (tierIndex <= 0 || grace === 0) {
+    return PRICING_TIERS[tierIndex].price;
+  }
+
+  const previousTier = PRICING_TIERS[tierIndex - 1];
+  if (count < previousTier.threshold + grace) {
+    return previousTier.price;
+  }
+  return PRICING_TIERS[tierIndex].price;
 }
 
 export function usdcToBaseUnits(amountUSDC) {

@@ -31,7 +31,11 @@ function addressFromTopic(topic) {
 
 function parseAmountFromLogData(data) {
   if (typeof data !== 'string' || !data.startsWith('0x')) return 0n;
-  return BigInt(data);
+  try {
+    return BigInt(data);
+  } catch {
+    return 0n;
+  }
 }
 
 export async function verifyUSDCTransfer({
@@ -67,7 +71,9 @@ export async function verifyUSDCTransfer({
     }
 
     const usdcContract = normalizeAddress(USDC_CONTRACT_ADDRESS);
-    let matchedLog = null;
+    let matchedFrom = '';
+    let matchedTo = '';
+    let matchedAmountBaseUnits = 0n;
 
     for (const log of receipt.logs || []) {
       if (normalizeAddress(log.address) !== usdcContract) continue;
@@ -80,31 +86,28 @@ export async function verifyUSDCTransfer({
       if (from !== senderAddress) continue;
       if (to !== recipientAddress) continue;
 
-      matchedLog = {
-        from,
-        to,
-        amountBaseUnits: parseAmountFromLogData(log.data),
-      };
-      break;
+      matchedFrom = from;
+      matchedTo = to;
+      matchedAmountBaseUnits += parseAmountFromLogData(log.data);
     }
 
-    if (!matchedLog) {
+    if (!matchedFrom || !matchedTo) {
       return { valid: false, reason: 'No matching USDC transfer found' };
     }
 
-    if (matchedLog.amountBaseUnits < minBaseUnits) {
+    if (matchedAmountBaseUnits < minBaseUnits) {
       return {
         valid: false,
-        reason: `Insufficient amount: ${baseUnitsToUSDC(matchedLog.amountBaseUnits)} < ${minAmountUSDC}`,
+        reason: `Insufficient amount: ${baseUnitsToUSDC(matchedAmountBaseUnits)} < ${minAmountUSDC}`,
       };
     }
 
     return {
       valid: true,
-      sender: matchedLog.from,
-      recipient: matchedLog.to,
-      amountBaseUnits: matchedLog.amountBaseUnits,
-      amountUSDC: baseUnitsToUSDC(matchedLog.amountBaseUnits),
+      sender: matchedFrom,
+      recipient: matchedTo,
+      amountBaseUnits: matchedAmountBaseUnits,
+      amountUSDC: baseUnitsToUSDC(matchedAmountBaseUnits),
     };
   } catch (err) {
     return { valid: false, reason: `Verification failed: ${err.message}` };

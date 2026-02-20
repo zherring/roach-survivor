@@ -346,7 +346,7 @@ function applyPaidUI() {
   openShopBtn?.classList.toggle('hidden', !paid);
   mobileSaveBtn?.classList.toggle('hidden', paid);
   mobileOpenShopBtn?.classList.toggle('hidden', !paid);
-  mobileSavedBadge?.classList.add('hidden');
+  mobileSavedBadge?.classList.toggle('hidden', !paid);
 
   if (paid) {
     saveGameBtn?.classList.add('saved');

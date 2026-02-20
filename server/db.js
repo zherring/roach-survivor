@@ -109,6 +109,29 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_players_payment_tx_hash ON players (payment_tx_hash)'
   );
 
+  const duplicateWallets = await pool.query(
+    `SELECT lower(wallet_address) AS wallet
+     FROM players
+     WHERE paid_account = TRUE
+       AND wallet_address IS NOT NULL
+     GROUP BY lower(wallet_address)
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+
+  if (duplicateWallets.rowCount === 0) {
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_players_paid_wallet_unique
+       ON players (lower(wallet_address))
+       WHERE paid_account = TRUE
+         AND wallet_address IS NOT NULL`
+    );
+  } else {
+    console.warn(
+      `Skipping unique paid wallet index due to duplicate wallet records (example: ${duplicateWallets.rows[0].wallet})`
+    );
+  }
+
   await pool.query(
     `INSERT INTO payment_config (id, paid_player_count, updated_at)
      VALUES (
@@ -283,6 +306,28 @@ const db = {
           alreadyPaid: true,
           paidCount: Number(countResult.rows[0]?.paid_player_count || 0),
         };
+      }
+
+      const normalizedWallet = typeof walletAddress === 'string'
+        ? walletAddress.trim().toLowerCase()
+        : '';
+      if (normalizedWallet) {
+        const walletOwner = await client.query(
+          `SELECT id
+           FROM players
+           WHERE paid_account = TRUE
+             AND wallet_address IS NOT NULL
+             AND lower(wallet_address) = $1
+             AND id <> $2
+           LIMIT 1
+           FOR UPDATE`,
+          [normalizedWallet, playerId]
+        );
+        if (walletOwner.rows[0]) {
+          const err = new Error('Wallet already linked to another paid account');
+          err.code = 'WALLET_ALREADY_LINKED';
+          throw err;
+        }
       }
 
       await client.query(

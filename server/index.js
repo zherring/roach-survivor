@@ -9,11 +9,20 @@ import { db, initDB } from './db.js';
 import { verifyUSDCTransfer } from './payment-verifier.js';
 import {
   BASE_CHAIN_ID,
+  PAYMENT_STAMPEDE_GRACE_PLAYERS,
   PAYMENT_RECIPIENT_ADDRESS,
+  getGraceAdjustedPriceForPlayerCount,
   getPriceForPlayerCount,
   normalizeAddress,
 } from './payment-config.js';
-import { createSiweChallenge, verifySiweChallenge } from './siwe.js';
+import {
+  SIWE_SESSION_COOKIE_NAME,
+  createSiweChallenge,
+  createSiweSessionId,
+  getRequestOrigin,
+  normalizeSiweSessionId,
+  verifySiweChallenge,
+} from './siwe.js';
 
 const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
@@ -45,18 +54,76 @@ function readBody(req) {
   });
 }
 
+function getApiHeaders({ cors = false } = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (cors) {
+    headers['Access-Control-Allow-Origin'] = '*';
+    headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
+    headers['Access-Control-Allow-Headers'] = 'Content-Type';
+  }
+  return headers;
+}
+
+function parseCookies(req) {
+  const raw = String(req.headers.cookie || '');
+  const cookies = {};
+  for (const pair of raw.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx <= 0) continue;
+    const key = pair.slice(0, idx).trim();
+    const value = pair.slice(idx + 1).trim();
+    if (!key) continue;
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch {
+      cookies[key] = value;
+    }
+  }
+  return cookies;
+}
+
+function buildSessionCookie(req, value) {
+  const secure = getRequestOrigin(req).uri.startsWith('https://');
+  const attrs = [
+    `${SIWE_SESSION_COOKIE_NAME}=${encodeURIComponent(value)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=1800',
+  ];
+  if (secure) attrs.push('Secure');
+  return attrs.join('; ');
+}
+
+function isSensitiveApiPath(pathname) {
+  return pathname === '/api/siwe/challenge'
+    || pathname === '/api/siwe/verify'
+    || pathname === '/api/verify-payment'
+    || pathname === '/api/wallet-paid-status';
+}
+
+function isSameOriginRequest(req) {
+  const origin = String(req.headers.origin || '').trim();
+  if (!origin) return true;
+  const { uri } = getRequestOrigin(req);
+  return origin === uri;
+}
+
+function rejectCrossOrigin(req, res) {
+  if (isSameOriginRequest(req)) return false;
+  res.writeHead(403, getApiHeaders());
+  res.end(JSON.stringify({ error: 'Cross-origin request blocked' }));
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   // Parse URL to strip query strings
   const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
   const urlPath = parsedUrl.pathname;
 
-  // CORS headers for all responses
-  const apiHeaders = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
+  const apiHeaders = getApiHeaders({ cors: !isSensitiveApiPath(urlPath) });
 
   if (req.method === 'OPTIONS' && urlPath.startsWith('/api/')) {
     res.writeHead(204, apiHeaders);
@@ -66,6 +133,7 @@ const server = http.createServer(async (req, res) => {
 
   // GET /api/wallet-paid-status — check whether wallet already owns a paid account
   if (urlPath === '/api/wallet-paid-status' && req.method === 'GET') {
+    if (rejectCrossOrigin(req, res)) return;
     const walletAddress = parsedUrl.searchParams.get('walletAddress') || '';
     const normalizedWallet = normalizeAddress(walletAddress);
     if (!normalizedWallet) {
@@ -91,14 +159,26 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/siwe/challenge — issue a short-lived challenge message for wallet re-auth
   if (urlPath === '/api/siwe/challenge' && req.method === 'POST') {
+    if (rejectCrossOrigin(req, res)) return;
     try {
       const body = JSON.parse(await readBody(req));
       const walletAddress = body?.walletAddress;
-      const created = createSiweChallenge(req, walletAddress);
+      const cookies = parseCookies(req);
+      let sessionId = normalizeSiweSessionId(cookies[SIWE_SESSION_COOKIE_NAME]);
+      let shouldSetSessionCookie = false;
+      if (!sessionId) {
+        sessionId = createSiweSessionId();
+        shouldSetSessionCookie = true;
+      }
+
+      const created = createSiweChallenge(req, walletAddress, sessionId);
       if (!created.ok) {
         res.writeHead(created.status || 400, apiHeaders);
         res.end(JSON.stringify({ error: created.error || 'Failed to create challenge' }));
         return;
+      }
+      if (shouldSetSessionCookie) {
+        res.setHeader('Set-Cookie', buildSessionCookie(req, sessionId));
       }
       res.writeHead(200, apiHeaders);
       res.end(JSON.stringify(created.challenge));
@@ -113,12 +193,17 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/siwe/verify — verify wallet signature and return paid account token
   if (urlPath === '/api/siwe/verify' && req.method === 'POST') {
+    if (rejectCrossOrigin(req, res)) return;
     try {
       const body = JSON.parse(await readBody(req));
+      const cookies = parseCookies(req);
+      const sessionId = normalizeSiweSessionId(cookies[SIWE_SESSION_COOKIE_NAME]);
       const verification = verifySiweChallenge({
         walletAddress: body?.walletAddress,
         nonce: body?.nonce,
         signature: body?.signature,
+        sessionId,
+        requestOrigin: getRequestOrigin(req).uri,
       });
       if (!verification.ok) {
         res.writeHead(verification.status || 400, apiHeaders);
@@ -158,14 +243,17 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const paidCount = await db.getPaidPlayerCount();
-      const price = getPriceForPlayerCount(paidCount);
+      const strictPrice = getPriceForPlayerCount(paidCount);
+      const price = getGraceAdjustedPriceForPlayerCount(paidCount);
       res.writeHead(200, apiHeaders);
       res.end(JSON.stringify({
         price,
+        strictPrice,
         paidCount,
         recipientAddress: PAYMENT_RECIPIENT_ADDRESS,
         chainId: BASE_CHAIN_ID,
         currency: 'USDC',
+        stampedeGracePlayers: PAYMENT_STAMPEDE_GRACE_PLAYERS,
       }));
     } catch (err) {
       console.error('Pricing API error:', err.message);
@@ -177,6 +265,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST /api/verify-payment — verify USDC tx and mark player paid
   if (urlPath === '/api/verify-payment' && req.method === 'POST') {
+    if (rejectCrossOrigin(req, res)) return;
     try {
       const body = JSON.parse(await readBody(req));
       const { txHash, playerId, walletAddress } = body;
@@ -212,6 +301,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const existingWalletOwner = await db.getPaidPlayerByWallet(normalizedWallet);
+      if (existingWalletOwner && existingWalletOwner.id !== playerId) {
+        res.writeHead(409, apiHeaders);
+        res.end(JSON.stringify({ error: 'Wallet already linked to another paid account' }));
+        return;
+      }
+
       // Already paid
       if (player.paid_account) {
         res.writeHead(200, apiHeaders);
@@ -228,7 +324,7 @@ const server = http.createServer(async (req, res) => {
 
       // Get expected price
       const paidCount = await db.getPaidPlayerCount();
-      const expectedPrice = getPriceForPlayerCount(paidCount);
+      const expectedPrice = getGraceAdjustedPriceForPlayerCount(paidCount);
 
       // Verify on-chain
       const result = await verifyUSDCTransfer({
@@ -272,6 +368,11 @@ const server = http.createServer(async (req, res) => {
       if (err && err.code === '23505') {
         res.writeHead(400, apiHeaders);
         res.end(JSON.stringify({ error: 'Transaction already used' }));
+        return;
+      }
+      if (err && err.code === 'WALLET_ALREADY_LINKED') {
+        res.writeHead(409, apiHeaders);
+        res.end(JSON.stringify({ error: 'Wallet already linked to another paid account' }));
         return;
       }
       res.writeHead(500, apiHeaders);

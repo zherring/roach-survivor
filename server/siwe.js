@@ -4,10 +4,11 @@ import { BASE_CHAIN_ID, normalizeAddress } from './payment-config.js';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const SIWE_STATEMENT = 'Sign in to recover your paid $ROACH account.';
+export const SIWE_SESSION_COOKIE_NAME = 'roach_siwe_sid';
 
 const challenges = new Map();
 
-function getRequestOrigin(req) {
+export function getRequestOrigin(req) {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
   const host = forwardedHost || String(req.headers.host || '').trim();
@@ -47,10 +48,25 @@ function sweepExpiredChallenges(now = Date.now()) {
   }
 }
 
-export function createSiweChallenge(req, walletAddress) {
+export function createSiweSessionId() {
+  return randomBytes(32).toString('hex');
+}
+
+export function normalizeSiweSessionId(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!/^[0-9a-f]{64}$/i.test(trimmed)) return '';
+  return trimmed.toLowerCase();
+}
+
+export function createSiweChallenge(req, walletAddress, sessionId) {
   const normalized = normalizeAddress(walletAddress);
   if (!normalized) {
     return { ok: false, status: 400, error: 'Invalid wallet address' };
+  }
+  const normalizedSessionId = normalizeSiweSessionId(sessionId);
+  if (!normalizedSessionId) {
+    return { ok: false, status: 400, error: 'Missing recovery session' };
   }
 
   sweepExpiredChallenges();
@@ -70,6 +86,8 @@ export function createSiweChallenge(req, walletAddress) {
 
   challenges.set(nonce, {
     walletAddress: normalized,
+    sessionId: normalizedSessionId,
+    origin: uri,
     message,
     expiresAt: expiresAtDate.getTime(),
   });
@@ -84,7 +102,13 @@ export function createSiweChallenge(req, walletAddress) {
   };
 }
 
-export function verifySiweChallenge({ walletAddress, nonce, signature }) {
+export function verifySiweChallenge({
+  walletAddress,
+  nonce,
+  signature,
+  sessionId,
+  requestOrigin,
+}) {
   const normalized = normalizeAddress(walletAddress);
   if (!normalized) {
     return { ok: false, status: 400, error: 'Invalid wallet address' };
@@ -94,6 +118,13 @@ export function verifySiweChallenge({ walletAddress, nonce, signature }) {
   }
   if (!signature || typeof signature !== 'string') {
     return { ok: false, status: 400, error: 'Missing signature' };
+  }
+  const normalizedSessionId = normalizeSiweSessionId(sessionId);
+  if (!normalizedSessionId) {
+    return { ok: false, status: 400, error: 'Missing recovery session' };
+  }
+  if (!requestOrigin || typeof requestOrigin !== 'string') {
+    return { ok: false, status: 400, error: 'Missing request origin' };
   }
 
   sweepExpiredChallenges();
@@ -108,6 +139,14 @@ export function verifySiweChallenge({ walletAddress, nonce, signature }) {
   if (challenge.expiresAt <= Date.now()) {
     challenges.delete(nonce);
     return { ok: false, status: 400, error: 'Challenge expired' };
+  }
+  if (challenge.sessionId !== normalizedSessionId) {
+    challenges.delete(nonce);
+    return { ok: false, status: 401, error: 'Challenge session mismatch' };
+  }
+  if (challenge.origin !== requestOrigin) {
+    challenges.delete(nonce);
+    return { ok: false, status: 401, error: 'Challenge origin mismatch' };
   }
 
   try {
