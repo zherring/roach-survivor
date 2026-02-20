@@ -171,9 +171,9 @@ A skill-based multiplayer game where players control roaches, stomp other roache
 ## Tokenomics ($ROACH on Base)
 
 ### Token
-- **$ROACH** is a Clanker token on Base, deployed via Farcaster
-- **90% treasury** — locked in the game, no withdraw affordance currently. Can migrate to true on-chain contract later if successful.
-- **10% float** — public liquidity on Clanker/Base
+- **$ROACH** is deployed directly by the team on Base (not via Clanker)
+- **90% treasury** — allocated to a 2/3 multisig and streamed to game treasury operations over 1 month via Hedgey (manual setup in v1)
+- **10% float** — public liquidity seeded manually by the team (custom LP setup, no structured Clanker LP)
 - No on-chain minting in-app — token exists independently
 
 ### Freemium Model ("Save Game")

@@ -119,6 +119,11 @@ async function initDB() {
      ON CONFLICT (id) DO NOTHING`,
     [Date.now()]
   );
+
+  // Migration: hp column INTEGER -> DOUBLE PRECISION for fractional decay
+  await pool.query(`
+    ALTER TABLE sessions ALTER COLUMN hp TYPE DOUBLE PRECISION;
+  `).catch(() => { /* already migrated or column doesn't exist */ });
 }
 
 const db = {
@@ -336,6 +341,17 @@ const db = {
       [txHash]
     );
     return rows.length > 0;
+  },
+
+  async getLeaderboard(limit = 20) {
+    const { rows } = await pool.query(
+      `SELECT id, name, banked_balance FROM players
+       WHERE banked_balance > 0
+       ORDER BY banked_balance DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return rows;
   },
 
   async close() {

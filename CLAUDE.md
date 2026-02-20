@@ -4,73 +4,100 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-$ROACH is a skill-based multiplayer browser game where players mint roaches, stomp other roaches for $ROACH tokens, and survive as long as possible. The project currently consists of a single-file HTML prototype (`roach-prototype.html`) with plans for Vibecoins integration for tokenomics.
+$ROACH is a skill-based multiplayer browser game where players control roaches, stomp other roaches for points, and survive as long as possible. The game has a full Node.js multiplayer backend with PostgreSQL persistence, WebSocket networking, and a DOM-based client.
 
-## Running the Prototype
+**Key docs** (read these before making architectural decisions):
+- `ARCHITECTURE-ROACH-GAME.md` - Full architecture, protocol spec, milestone roadmap, current status
+- `PRD-ROACH-GAME.md` - Game design, mechanics, tokenomics
+- `AGENT-IMPLEMENTATION.md` - AI agent integration guide
 
-Open `roach-prototype.html` directly in a browser - no build process or dependencies required.
+## Running the Game
+
+```bash
+# Local development (requires PostgreSQL)
+npm run dev    # creates db if needed, runs with --watch
+
+# Production
+npm start      # requires DATABASE_URL env var
+```
+
+The server serves static files from `client/` and runs WebSocket on the same port (default 3000).
+
+**Legacy prototype**: `roach-prototype.html` is an older single-file prototype. The real game is the client/server architecture below.
 
 ## Architecture
 
-### Current State: Single-File Prototype
+### Stack
+- **Server**: Node.js, `ws` (WebSocket), `pg` (PostgreSQL), zero framework
+- **Client**: Vanilla JS, DOM-based rendering (not canvas), sprite-based visuals
+- **Database**: PostgreSQL with players + sessions tables
+- **Shared**: `shared/constants.js` - game tuning values used by both client and server
 
-The prototype is entirely contained in `roach-prototype.html`:
-- **CSS** (lines 7-223): Pixel aesthetic styling, no rounded corners (90s Nickelodeon gross-out vibe)
-- **HTML** (lines 225-273): Game UI including stats, minimap, canvas container, dev controls
-- **JavaScript** (lines 275-1036): All game logic
+### File Map
 
-### Key JavaScript Classes
+```
+server/
+  index.js          # HTTP + WebSocket server entry point
+  game-server.js    # Game loop (20 TPS), player management, message handling
+  room.js           # Per-room physics, combat resolution, NPC spawning
+  roach.js          # Entity class (movement, hit detection, anti-cheat)
+  house-bot.js      # AI bot targeting and pursuit
+  motel.js          # Banking system (motel spawn, collision, progress)
+  db.js             # PostgreSQL persistence layer
 
-- **`Roach`**: Core entity class handling movement, health, wealth-based speed (rubber-band mechanic), and room collision
-- **`HouseBot`**: AI stomper that hunts roaches, preferring wealthy targets
+client/
+  game.js           # Client-side game logic, WebSocket connection, rendering
+  index.html        # Game UI
+  styles.css        # Pixel aesthetic styling
 
-### Game State Structure
+shared/
+  constants.js      # All game tuning values (tick rate, grid size, economy, etc.)
 
-```javascript
-state = {
-  balance,        // Player's $ROACH
-  aliveTime,      // Survival timer
-  kills,          // Kill counter
-  currentRoom,    // "x,y" string
-  rooms: {        // 2x2 grid (prototype), target is 10x10
-    'x,y': { roaches: [], deaths, stompers, houseBots: [] }
-  },
-  playerRoach,    // Reference to player's Roach instance
-  lastStomp,      // Cooldown tracking
-}
+smart-contracts/    # Foundry project for $ROACH ERC20 on Base
 ```
 
-### Core Mechanics (Implemented)
+### Database Schema
 
-- **Stomping**: Click-based with boot-sized hitbox (30x40px), 200ms cooldown, scatter on miss
-- **Movement**: WASD with "drunk steering" randomization
-- **Health**: 3 HP, $1 per HP to heal
-- **Death Penalty**: Lose 90% of balance to stomper
-- **Rubber-band**: Higher balance = slower movement (wealth penalty capped at 1.5)
-- **Room Navigation**: Must physically steer roach off screen edge (no teleporting)
-- **Visible Boots**: Player boot at 40% opacity when hovering, roaches flee from both player and house bot boots
-- **Wealth Attracts Boots**: House bots spawn dynamically based on room wealth (1 bot per $10 total wealth, max 5)
+**Players table**: id, name, banked_balance, total_kills, upgrade levels (7 types), platform identity, timestamps
 
-### Minimap Indicators
+**Sessions table**: player_id, room, position, balance, hp, updated_at (5-min expiry for reconnection)
 
-- **Wealth Bar**: Yellow bar at bottom of each room cell shows relative wealth (scales to $50 max)
-- **Bot Indicator**: Red "!" marks show number of house bots in each room (up to 5)
+### Networking
 
-### Visual Conventions
+WebSocket protocol with flat message types:
+- **Client -> Server**: `input` (position/velocity), `stomp`, `heal`, `buy_upgrade`, `reconnect`
+- **Server -> Client**: `welcome` (full state), `tick` (room snapshot + events), `room_enter`, upgrade results
+- Server ticks at 20 TPS, client movement is client-authoritative with server-side anti-cheat validation
 
-- Gray pixel: Regular roach (<$1)
-- Yellow pixel: Rich roach ($10+)
-- Cyan pixel: Player's roach
-- Magenta: Player's roach when rich
-- Green boot: Player's stomp cursor
-- Red boot: House bot AI stomper
+### Key Game Mechanics
 
-## Planned Features (Not Implemented)
+- **Economy**: Points-based. Passive income + kill rewards. Banking at Roach Motel (2s channel time)
+- **Combat**: Boot stomp with AoE splash damage, multi-hit zones, wealth-weighted bot targeting
+- **Movement**: Client-authoritative with drunk steering, wealth-based speed penalty
+- **Upgrades**: 7 persistent upgrade types (bootSize, multiStomp, rateOfFire, goldMagnet, wallBounce, idleIncome, shellArmor)
+- **Rooms**: 3x3 grid, edge-crossing transitions, per-room NPC/bot simulation
+- **Death**: 90% balance loss (reduced by shellArmor), instant respawn
 
-See `PRD-ROACH-GAME.md` for full roadmap. Key items:
-- Permanent upgrades (boot size, multi-stomp, rate-of-fire)
-- Withdrawal timelock mechanic
-- Vibecoins integration for tokenomics
-- 10x10 room grid
-- Multiplayer networking
-- Mobile touch controls
+### Security
+
+- Rate limiting (60 msg/sec per client)
+- Server-side input validation and velocity clamping
+- Position distance anti-cheat checks
+- Path traversal protection on static file serving
+- Heal cooldown enforced server-side
+
+## Milestone Status
+
+| Milestone | Status |
+|-----------|--------|
+| M1: Deploy & Share | DONE |
+| M2: Visual Polish (sprites, VFX, prospector NPC) | DONE |
+| M3: Sound Design | DONE |
+| M4: Mobile Touch Controls | DONE |
+| M5: Persistence & Reconnection (Postgres) | DONE |
+| M6: Permanent Upgrades | DONE |
+| M7: Miniapp Integration (Farcaster/Base) | NOT STARTED |
+| M8: Agent API | NOT STARTED |
+| M9: Crypto Integration (USDC save gate) | NOT STARTED |
+
+See `ARCHITECTURE-ROACH-GAME.md` Part 2 for full milestone details.

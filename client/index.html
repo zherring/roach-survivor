@@ -446,6 +446,13 @@
         height: 30px;
         font-size: 16px;
       }
+      #lb-btn {
+        top: 2px;
+        right: 38px;
+        width: 30px;
+        height: 30px;
+        font-size: 14px;
+      }
 
       /* Game fills width, aspect ratio preserved */
       #game-wrapper {
@@ -1100,6 +1107,97 @@
     #log .death { color: #f00; }
     #log .money { color: #ff0; }
 
+    /* ==================== LEADERBOARD MODAL ==================== */
+    #lb-btn {
+      position: fixed;
+      top: 8px;
+      right: 52px;
+      z-index: 3000;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid #444;
+      color: #f0c040;
+      font-family: monospace;
+      font-size: 16px;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    #lb-btn:hover { border-color: #f0c040; color: #fff; }
+    #leaderboard-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 5000;
+      padding: 14px;
+    }
+    #leaderboard-modal.visible { display: flex; }
+    #leaderboard-inner {
+      background: #111;
+      border: 2px solid #f0c040;
+      padding: 16px 20px;
+      width: min(400px, 90vw);
+      max-height: 80vh;
+      overflow-y: auto;
+      position: relative;
+    }
+    #leaderboard-close {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 20px;
+      cursor: pointer;
+      font-family: monospace;
+    }
+    #leaderboard-close:hover { color: #fff; }
+    #leaderboard-label {
+      color: #f0c040;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 6px;
+    }
+    #leaderboard-info {
+      display: flex;
+      justify-content: space-between;
+      color: #666;
+      font-size: 11px;
+      margin-bottom: 10px;
+    }
+    #lb-payout { color: #f0c040; }
+    #lb-reset { color: #f44; }
+    #leaderboard-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    #leaderboard-table th {
+      color: #888;
+      text-align: left;
+      border-bottom: 1px solid #333;
+      padding: 4px 6px;
+      font-weight: normal;
+    }
+    #leaderboard-table th:last-child { text-align: right; }
+    #leaderboard-table td {
+      color: #ccc;
+      padding: 4px 6px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    #leaderboard-table td:last-child { text-align: right; color: #ff0; }
+    #leaderboard-table tr.me td { color: #0ff; font-weight: bold; }
+    #leaderboard-table tr.me td:last-child { color: #0ff; }
+
     /* ==================== TUTORIAL OVERLAY ==================== */
     #tutorial-overlay {
       position: fixed;
@@ -1406,6 +1504,7 @@
   </style>
 </head>
 <body>
+  <button id="lb-btn" title="Leaderboard">🏆</button>
   <button id="mute-btn" title="Toggle sound">♪</button>
 
   <div id="desktop-layout">
@@ -1416,9 +1515,9 @@
       <div id="player-count"></div>
 
       <div id="stats">
-        <div class="stat">$ROACH: <span id="balance">0.00</span></div>
-        <div class="stat" id="banked-display">BANKED: <span id="banked">0.00</span></div>
-        <div class="stat">HP: <span id="player-hp">2</span>/2 <button id="heal-btn">Heal ($1)</button></div>
+        <div class="stat">$ROACH: <span id="balance">0</span></div>
+        <div class="stat" id="banked-display">BANKED: <span id="banked">0</span></div>
+        <div class="stat">HP: <span id="player-hp">2</span> <button id="heal-btn">Heal (10 $ROACH)</button></div>
         <div class="stat">Alive: <span id="alive-time">0s</span></div>
         <div class="stat">Kills: <span id="kills">0</span></div>
         <div class="stat">Room: <span id="current-room">1,1</span></div>
@@ -1431,7 +1530,7 @@
       <div id="controls">
         <kbd>Click</kbd> stomp<br>
         <kbd>WASD</kbd> steer roach<br>
-        <kbd>Space</kbd> heal ($1)<br>
+        <kbd>Space</kbd> heal (10 $ROACH)<br>
         Walk off edges to change rooms<br>
         Enter <span style="color:#f0c040">MOTEL</span> to bank $ROACH
       </div>
@@ -1443,11 +1542,11 @@
       <div id="mobile-hud">
         <div class="hud-group">
           <span class="hud-label">$ROACH</span>
-          <span class="hud-value" id="m-balance">0.00</span>
+          <span class="hud-value" id="m-balance">0</span>
         </div>
         <div class="hud-group">
           <span class="hud-label">Banked</span>
-          <span class="hud-value banked" id="m-banked">0.00</span>
+          <span class="hud-value banked" id="m-banked">0</span>
         </div>
         <div class="hud-group">
           <span class="hud-label">HP</span>
@@ -1471,7 +1570,7 @@
 
       <!-- Mobile heal bar — directly under game (shown on mobile only via CSS) -->
       <div id="mobile-heal-bar">
-        <button id="mobile-heal-btn">HEAL $1</button>
+        <button id="mobile-heal-btn">HEAL 10</button>
         <button id="mobile-save-btn">SAVE</button>
         <button id="mobile-open-shop-btn" class="hidden">STORE</button>
         <span class="saved-badge hidden" id="mobile-saved-badge">SAVED</span>
@@ -1592,6 +1691,22 @@
       </div>
       <div class="payment-status" id="payment-status"></div>
       <div class="payment-no-wallet hidden" id="payment-no-wallet">No wallet detected. Install MetaMask or use a Farcaster client.</div>
+    </div>
+  </div>
+
+  <!-- Leaderboard modal -->
+  <div id="leaderboard-modal">
+    <div id="leaderboard-inner">
+      <button id="leaderboard-close" aria-label="Close leaderboard">x</button>
+      <div id="leaderboard-label">Weekly Leaderboard</div>
+      <div id="leaderboard-info">
+        <span id="lb-payout">Payout: Sunday</span>
+        <span id="lb-reset"></span>
+      </div>
+      <table id="leaderboard-table">
+        <thead><tr><th>#</th><th>Name</th><th>$ROACH</th></tr></thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
     </div>
   </div>
 

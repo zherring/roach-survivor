@@ -21,7 +21,7 @@ export class Room {
 
   addNpcRoaches(count) {
     for (let i = 0; i < count; i++) {
-      this.roaches.push(new Roach(false, Math.random() * 3));
+      this.roaches.push(new Roach(false, Math.random() * 30));
     }
   }
 
@@ -87,7 +87,7 @@ export class Room {
             // Respawn after 5-10s
             setTimeout(() => {
               if (this.roaches.filter(r => !r.isPlayer).length < MAX_ROACHES_PER_ROOM) {
-                this.roaches.push(new Roach(false, Math.random() * 3));
+                this.roaches.push(new Roach(false, Math.random() * 30));
               }
             }, 5000 + Math.random() * 5000);
           }, 500);
@@ -114,7 +114,7 @@ export class Room {
     if (Math.random() < 0.01) {
       const npcCount = this.roaches.filter(r => !r.isPlayer).length;
       if (npcCount < MAX_ROACHES_PER_ROOM) {
-        this.roaches.push(new Roach(false, Math.random() * 3));
+        this.roaches.push(new Roach(false, Math.random() * 30));
       }
     }
 
@@ -163,7 +163,7 @@ export class Room {
             if (idx > -1) this.roaches.splice(idx, 1);
             setTimeout(() => {
               if (this.roaches.filter(r => !r.isPlayer).length < MAX_ROACHES_PER_ROOM) {
-                this.roaches.push(new Roach(false, Math.random() * 3));
+                this.roaches.push(new Roach(false, Math.random() * 30));
               }
             }, 5000 + Math.random() * 5000);
           }, 500);

@@ -1,6 +1,6 @@
 import {
-  TICK_RATE, GRID_SIZE, CONTAINER_WIDTH, CONTAINER_HEIGHT,
-  ROACH_WIDTH, ROACH_HEIGHT, HEAL_COST, MAX_HP,
+  TICK_RATE, TICKS_PER_SEC, GRID_SIZE, CONTAINER_WIDTH, CONTAINER_HEIGHT,
+  ROACH_WIDTH, ROACH_HEIGHT, HEAL_COST, MAX_HP, BASE_HP, HP_DECAY_RATE,
   UPGRADE_DEFS, getUpgradeCost, sanitizeUpgrades, createDefaultUpgrades,
   getStompCooldownForLevel, getBootScale,
 } from '../shared/constants.js';
@@ -86,6 +86,8 @@ export class GameServer {
     this.tickCount = 0;
     this.botAdjustTimer = 0;
     this.sessionSaveTimer = 0;
+    this.leaderboardCache = [];
+    this.leaderboardTimer = 0;
 
     // Create 3x3 grid
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -102,6 +104,11 @@ export class GameServer {
   async init() {
     const cleaned = await db.cleanStaleSessions();
     if (cleaned) console.log(`Cleaned ${cleaned} stale sessions`);
+    try {
+      this.leaderboardCache = await db.getLeaderboard(20);
+    } catch (e) {
+      console.error('Failed to load initial leaderboard:', e.message);
+    }
   }
 
   start() {
@@ -207,7 +214,7 @@ export class GameServer {
     this.players.set(roach.id, player);
 
     // Send welcome with full snapshot
-    this.send(ws, {
+    const welcomeMsg = {
       type: 'welcome',
       id: roach.id,
       token,
@@ -221,7 +228,9 @@ export class GameServer {
       upgrades: { ...upgrades },
       stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
       linkedPlatform: linkedPlatform || undefined,
-    });
+      leaderboard: this.leaderboardCache,
+    };
+    this.send(ws, welcomeMsg);
 
     console.log(`Player joined: ${name} (${roach.id}) in room ${roomKey}`);
     return roach.id;
@@ -303,10 +312,10 @@ export class GameServer {
         const healNow = Date.now();
         if (healNow - player.lastHeal < HEAL_COOLDOWN) break;
         const roach = player.roach;
-        if (roach.hp >= MAX_HP || roach.balance < HEAL_COST) break;
+        if (roach.balance < HEAL_COST) break;
         player.lastHeal = healNow;
         roach.balance -= HEAL_COST;
-        roach.hp = Math.min(roach.hp + 1, MAX_HP);
+        roach.hp += 1; // additive — no cap, decays back to BASE_HP over time
         roach.healCount++;
         break;
       }
@@ -442,11 +451,29 @@ export class GameServer {
       }
     }
 
+    // HP decay: player HP above BASE_HP decays at HP_DECAY_RATE per second
+    const hpDecayPerTick = HP_DECAY_RATE / TICKS_PER_SEC;
+    for (const [, player] of this.players) {
+      const roach = player.roach;
+      if (!roach.isDead && roach.hp > BASE_HP) {
+        roach.hp = Math.max(BASE_HP, roach.hp - hpDecayPerTick);
+      }
+    }
+
     // Periodic session save (every 200 ticks = ~10s)
     this.sessionSaveTimer++;
     if (this.sessionSaveTimer >= 200) {
       this.sessionSaveTimer = 0;
       this.saveSessions().catch(err => console.error('DB session save error:', err.message));
+    }
+
+    // Refresh leaderboard cache every 100 ticks (~5s)
+    this.leaderboardTimer++;
+    if (this.leaderboardTimer >= 100) {
+      this.leaderboardTimer = 0;
+      db.getLeaderboard(20).then(rows => {
+        this.leaderboardCache = rows;
+      }).catch(err => console.error('DB leaderboard error:', err.message));
     }
 
     // Adjust bots every ~60 ticks (3 seconds)
@@ -520,7 +547,8 @@ export class GameServer {
           id,
           balance: player.roach.balance,
           banked: player.bankedBalance,
-          hp: player.roach.hp,
+          hp: Math.round(player.roach.hp * 10) / 10,
+          baseHp: BASE_HP,
           isPaid: player.isPaid,
           lastInputSeq: player.roach.lastInputSeq,
           healCount: player.roach.healCount,
@@ -530,6 +558,9 @@ export class GameServer {
       };
       if (minimapData) {
         tickMsg.minimap = minimapData;
+      }
+      if (this.leaderboardTimer === 0 && this.leaderboardCache.length > 0) {
+        tickMsg.leaderboard = this.leaderboardCache;
       }
       this.send(player.ws, tickMsg);
     }

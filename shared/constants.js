@@ -15,11 +15,13 @@ export const BOT_HEIGHT = 101;
 export const GRID_SIZE = 3; // 3x3 room grid
 
 export const STOMP_COOLDOWN = 200; // ms
-export const HEAL_COST = 1;
-export const MAX_HP = 2;
+export const HEAL_COST = 10;
+export const MAX_HP = 2; // kept for reference but no longer a hard cap during play
+export const BASE_HP = 2; // HP decays back toward this value
+export const HP_DECAY_RATE = 1 / 3; // 1 HP lost per 3 seconds when above BASE_HP
 export const DEATH_PENALTY = 0.9; // lose 90% of balance
 export const KILL_REWARD = 0.9; // gain 90% of victim's balance
-export const INCOME_RATE = 0.01; // $0.01 per second per roach
+export const INCOME_RATE = 0.10; // 0.10 $ROACH per second per roach
 export const MAX_ROACHES_PER_ROOM = 10;
 
 export const PLAYER_BASE_SPEED = 3.125;
@@ -35,7 +37,7 @@ export const MOTEL_SIZE = 240;
 
 export const BOT_STOMP_COOLDOWN_MIN = 600;
 export const BOT_STOMP_COOLDOWN_RANGE = 300;
-export const BOTS_PER_WEALTH = 5; // 1 bot per $5 — more bots faster
+export const BOTS_PER_WEALTH = 50; // 1 bot per 50 $ROACH of room wealth
 export const MAX_BOTS_PER_ROOM = 8;
 export const STOMP_AOE_RADIUS = 69; // AoE splash damage radius
 export const STOMP_AOE_DAMAGE = 1; // 1 HP splash to nearby roaches
@@ -44,43 +46,43 @@ export const UPGRADE_DEFS = Object.freeze({
   bootSize: Object.freeze({
     label: 'Boot Size',
     maxLevel: 80,
-    baseCost: 0.5,
+    baseCost: 5,
     costMultiplier: 1.12,
   }),
   multiStomp: Object.freeze({
     label: 'Multi-stomp',
     maxLevel: 40,
-    baseCost: 2,
+    baseCost: 20,
     costMultiplier: 1.15,
   }),
   rateOfFire: Object.freeze({
     label: 'Rate-of-fire',
     maxLevel: 120,
-    baseCost: 0.75,
+    baseCost: 7.5,
     costMultiplier: 1.1,
   }),
   goldMagnet: Object.freeze({
     label: 'Gold Attraction',
     maxLevel: 160,
-    baseCost: 0.6,
+    baseCost: 6,
     costMultiplier: 1.11,
   }),
   wallBounce: Object.freeze({
     label: 'Wall Bounce',
     maxLevel: 60,
-    baseCost: 1,
+    baseCost: 10,
     costMultiplier: 1.12,
   }),
   idleIncome: Object.freeze({
     label: 'Idle Income',
     maxLevel: 160,
-    baseCost: 0.8,
+    baseCost: 8,
     costMultiplier: 1.11,
   }),
   shellArmor: Object.freeze({
     label: 'Shell Armor',
     maxLevel: 90,
-    baseCost: 1.2,
+    baseCost: 12,
     costMultiplier: 1.12,
   }),
 });
