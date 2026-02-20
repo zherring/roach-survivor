@@ -138,6 +138,9 @@ export class GameServer {
     let isPaid = false;
     let upgrades = createDefaultUpgrades();
     let linkedPlatform = null;
+    let linkedIdentity = null;
+    let walletAddress = null;
+    let totalKills = 0;
 
     // Try to restore via platform identity first (cross-device persistence)
     let session = null;
@@ -156,6 +159,11 @@ export class GameServer {
         name = existing.name;
         bankedBalance = existing.banked_balance;
         isPaid = !!existing.paid_account;
+        walletAddress = existing.wallet_address || null;
+        totalKills = Number(existing.total_kills) || 0;
+        if (existing.platform_type && existing.platform_id) {
+          linkedIdentity = `${existing.platform_type}:${existing.platform_id}`;
+        }
         upgrades = sanitizeUpgrades({
           bootSize: existing.boot_size_level,
           multiStomp: existing.multi_stomp_level,
@@ -175,6 +183,7 @@ export class GameServer {
         if (platformInfo && platformInfo.platformType && platformInfo.platformId && !existing.platform_id) {
           await db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
           linkedPlatform = platformInfo.platformType;
+          linkedIdentity = `${platformInfo.platformType}:${platformInfo.platformId}`;
           console.log(`Linked ${platformInfo.platformType}:${platformInfo.platformId} to player ${token.slice(0, 8)}...`);
         }
 
@@ -193,11 +202,14 @@ export class GameServer {
       bankedBalance = 0;
       restored = false;
       upgrades = createDefaultUpgrades();
+      walletAddress = null;
+      totalKills = 0;
 
       // Link platform identity to new player
       if (platformInfo && platformInfo.platformType && platformInfo.platformId) {
         await db.linkPlatform(token, platformInfo.platformType, platformInfo.platformId);
         linkedPlatform = platformInfo.platformType;
+        linkedIdentity = `${platformInfo.platformType}:${platformInfo.platformId}`;
         console.log(`New player linked to ${platformInfo.platformType}:${platformInfo.platformId}`);
       }
     }
@@ -219,6 +231,9 @@ export class GameServer {
       bankedBalance: bankedBalance || 0,
       upgrades,
       isPaid: isPaid || false,
+      linkedIdentity,
+      walletAddress,
+      totalKills,
       lastStomp: 0,
       lastHeal: 0,
       cursorX: INVALID_CURSOR,
@@ -245,6 +260,11 @@ export class GameServer {
       stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
       linkedPlatform: linkedPlatform || undefined,
       leaderboard: this.leaderboardCache,
+      account: {
+        walletAddress: player.walletAddress,
+        linkedIdentity: player.linkedIdentity,
+        totalKills: player.totalKills,
+      },
     };
     this.send(ws, welcomeMsg);
 
@@ -462,6 +482,7 @@ export class GameServer {
       if (evt.type === 'stomp_kill' && evt.stomperId) {
         const killer = this.players.get(evt.stomperId);
         if (killer && killer.token) {
+          killer.totalKills = (killer.totalKills || 0) + 1;
           db.incrementKills(killer.token).catch(err => console.error('DB kill error:', err.message));
         }
       }
@@ -585,6 +606,9 @@ export class GameServer {
           healCount: player.roach.healCount,
           upgrades: { ...player.upgrades },
           stompCooldown: getStompCooldownForLevel(player.upgrades.rateOfFire),
+          walletAddress: player.walletAddress,
+          linkedIdentity: player.linkedIdentity,
+          totalKills: player.totalKills || 0,
         },
       };
       if (minimapData) {
@@ -650,11 +674,18 @@ export class GameServer {
     }
   }
 
-  markPlayerPaid(playerToken) {
+  markPlayerPaid(playerToken, walletAddress = null) {
     for (const [, player] of this.players) {
       if (player.token === playerToken) {
         player.isPaid = true;
-        this.send(player.ws, { type: 'payment_verified', isPaid: true });
+        if (walletAddress) {
+          player.walletAddress = walletAddress;
+        }
+        this.send(player.ws, {
+          type: 'payment_verified',
+          isPaid: true,
+          walletAddress: player.walletAddress || null,
+        });
         break;
       }
     }

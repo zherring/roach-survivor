@@ -3,9 +3,11 @@ import {
   BOOT_WIDTH, BOOT_HEIGHT, BOT_WIDTH, BOT_HEIGHT,
   PLAYER_BASE_SPEED, WEALTH_SPEED_PENALTY_MAX, WEALTH_SPEED_PENALTY_RATE,
   MIN_SPEED, TICK_RATE, MOTEL_SIZE, MOTEL_SAVE_TIME, GRID_SIZE,
+  INCOME_RATE,
   HEAL_COST, MAX_HP, BASE_HP,
   UPGRADE_DEFS, UPGRADE_ORDER, createDefaultUpgrades, sanitizeUpgrades,
   getUpgradeCost, getBootScale, getMultiStompOffsets, getStompCooldownForLevel,
+  getGoldAttractionMultiplier, getIdleIncomePerSecond,
 } from '/shared/constants.js';
 import { platform } from './platform.js';
 import {
@@ -117,8 +119,11 @@ let myName = '';
 let currentRoom = '1,1';
 let gridSize = GRID_SIZE;
 let balance = 0;
+let displayBalance = 0;
+let lastServerBalanceAt = Date.now();
 let bankedBalance = 0;
 let kills = 0;
+let totalKills = 0;
 let aliveTime = 0;
 let lastAliveReset = Date.now();
 let upgrades = createDefaultUpgrades();
@@ -203,6 +208,13 @@ const shopModal = document.getElementById('shop-modal');
 const lbModal = document.getElementById('leaderboard-modal');
 const lbBtn = document.getElementById('lb-btn');
 const lbCloseBtn = document.getElementById('leaderboard-close');
+const accountBtn = document.getElementById('acct-btn');
+const accountModal = document.getElementById('account-modal');
+const accountCloseBtn = document.getElementById('account-close');
+const accountWalletEl = document.getElementById('acct-wallet');
+const accountEarnedEl = document.getElementById('acct-earned');
+const accountKillsEl = document.getElementById('acct-kills');
+const accountUpgradesEl = document.getElementById('account-upgrades');
 const shopPanelEl = document.getElementById('shop-panel');
 const openShopBtn = document.getElementById('open-shop-btn');
 const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
@@ -234,6 +246,15 @@ let shopProspectorMouthTimer = null;
 let shopProspectorTypeTimer = null;
 let shopProspectorAnimRunId = 0;
 let currentStoreTab = 'boot';
+const ROACH_BALANCE_DECIMALS = 4;
+const MAX_PASSIVE_DISPLAY_LEAD_SECONDS = 0.35;
+const ENS_LOOKUP_RPC_URL = 'https://ethereum-rpc.publicnode.com';
+let accountWalletAddress = null;
+let accountLinkedIdentity = null;
+let leaderboardRows = [];
+const ensNameCache = new Map(); // lowercased address -> ENS name (or '' if none)
+const ensPending = new Set();
+let ensProviderPromise = null;
 
 function applyUpgradeState(rawUpgrades) {
   upgrades = sanitizeUpgrades(rawUpgrades);
@@ -253,6 +274,139 @@ function formatPriceLabel(value) {
   if (!Number.isFinite(price)) return '--';
   if (price < 1) return price.toFixed(2);
   return price % 1 === 0 ? price.toFixed(0) : price.toFixed(2);
+}
+
+function formatRoach(value, decimals = ROACH_BALANCE_DECIMALS) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return (0).toFixed(decimals);
+  return amount.toFixed(decimals);
+}
+
+function formatRoachLocale(value, decimals = ROACH_BALANCE_DECIMALS) {
+  const amount = Number(value);
+  const safe = Number.isFinite(amount) ? amount : 0;
+  return safe.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function shortAddress(address) {
+  if (typeof address !== 'string' || address.length < 10) return 'Not linked';
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function normalizeAddress(address) {
+  if (typeof address !== 'string') return '';
+  const trimmed = address.trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed.toLowerCase() : '';
+}
+
+function applyServerWalletAddress(nextWalletAddress) {
+  if (nextWalletAddress === null) {
+    accountWalletAddress = null;
+    return;
+  }
+  if (typeof nextWalletAddress !== 'string') return;
+  const normalized = normalizeAddress(nextWalletAddress);
+  accountWalletAddress = normalized || null;
+}
+
+function applyServerLinkedIdentity(nextLinkedIdentity) {
+  if (nextLinkedIdentity === null) {
+    accountLinkedIdentity = null;
+    return;
+  }
+  if (typeof nextLinkedIdentity !== 'string') return;
+  const trimmed = nextLinkedIdentity.trim();
+  accountLinkedIdentity = trimmed.length > 0 ? trimmed : null;
+}
+
+async function getEnsProvider() {
+  if (!ensProviderPromise) {
+    ensProviderPromise = import('https://esm.sh/ethers@6')
+      .then((mod) => new mod.JsonRpcProvider(ENS_LOOKUP_RPC_URL))
+      .catch(() => null);
+  }
+  return ensProviderPromise;
+}
+
+async function resolveEns(address) {
+  const normalized = normalizeAddress(address);
+  if (!normalized || ensNameCache.has(normalized) || ensPending.has(normalized)) return;
+  ensPending.add(normalized);
+  try {
+    const provider = await getEnsProvider();
+    if (!provider) {
+      ensNameCache.set(normalized, '');
+      return;
+    }
+    const ensName = await provider.lookupAddress(normalized).catch(() => null);
+    ensNameCache.set(normalized, typeof ensName === 'string' ? ensName : '');
+  } finally {
+    ensPending.delete(normalized);
+    if (leaderboardRows.length > 0) renderLeaderboard(leaderboardRows);
+    updateAccountSummary();
+  }
+}
+
+function getWalletIdentity(walletAddress, fallback = '') {
+  const normalized = normalizeAddress(walletAddress);
+  if (!normalized) return fallback || 'Unknown';
+  if (!ensNameCache.has(normalized) && !ensPending.has(normalized)) {
+    void resolveEns(normalized);
+  }
+  const ensName = ensNameCache.get(normalized);
+  if (typeof ensName === 'string' && ensName.length > 0) return ensName;
+  return shortAddress(normalized);
+}
+
+function getPassiveIncomePerSecond() {
+  const attractionMult = getGoldAttractionMultiplier(upgrades.goldMagnet || 0);
+  const idleIncome = getIdleIncomePerSecond(upgrades.idleIncome || 0);
+  return INCOME_RATE * attractionMult + idleIncome;
+}
+
+function setAuthoritativeBalance(nextBalance) {
+  const parsed = Number(nextBalance);
+  if (!Number.isFinite(parsed)) return;
+  const prevBalance = balance;
+  balance = parsed;
+  lastServerBalanceAt = Date.now();
+
+  if (!Number.isFinite(displayBalance)) {
+    displayBalance = parsed;
+    return;
+  }
+  // Snap downward quickly on losses/spending; animate gains for a smoother "earning" feel.
+  if (parsed < prevBalance || Math.abs(parsed - displayBalance) > 5) {
+    displayBalance = parsed;
+  } else {
+    displayBalance = Math.max(Math.min(displayBalance, parsed), 0);
+  }
+}
+
+function updateBalanceHud(now = Date.now()) {
+  const myRoach = roachEls.get(myId)?.data;
+  const alive = !!myRoach && !myRoach.dead;
+  const serverAgeSeconds = Math.max(0, (now - lastServerBalanceAt) / 1000);
+  const passiveLead = alive
+    ? Math.min(serverAgeSeconds, MAX_PASSIVE_DISPLAY_LEAD_SECONDS) * getPassiveIncomePerSecond()
+    : 0;
+  const target = balance + passiveLead;
+  const diff = target - displayBalance;
+
+  if (Math.abs(diff) < 0.00005) {
+    displayBalance = target;
+  } else {
+    const gainLerp = Math.abs(diff) > 0.5 ? 0.34 : 0.2;
+    const loseLerp = 0.65;
+    displayBalance += diff * (diff >= 0 ? gainLerp : loseLerp);
+  }
+
+  const formatted = formatRoach(displayBalance);
+  balanceEl.textContent = formatted;
+  if (mobileBalanceEl) mobileBalanceEl.textContent = formatted;
 }
 
 function setPaymentStatus(text, type = '') {
@@ -314,7 +468,10 @@ function applyRecoveredAccount(restoreResult) {
   const tokenChanged = recoveredToken !== sessionToken;
   sessionToken = recoveredToken;
   localStorage.setItem('roach_session_token', recoveredToken);
+  refreshAccountButton();
   loadOnboardingState(recoveredToken);
+  applyServerWalletAddress(restoreResult?.walletAddress ?? null);
+  updateAccountSummary();
 
   isPaid = true;
   applyPaidUI();
@@ -684,6 +841,7 @@ let sessionToken = localStorage.getItem('roach_session_token');
 let onboardingToken = null;
 let onboardingSeen = false;
 let onboardingIntroQueued = false;
+refreshAccountButton();
 
 function getOnboardingStorageKey(token) {
   return token ? `roach_onboarded_${token}` : null;
@@ -759,7 +917,15 @@ function handleMessage(msg) {
         sessionToken = msg.token;
         localStorage.setItem('roach_session_token', msg.token);
       }
+      refreshAccountButton();
       loadOnboardingState(sessionToken || msg.token || null);
+      if (msg.account && typeof msg.account === 'object') {
+        applyServerWalletAddress(msg.account.walletAddress);
+        applyServerLinkedIdentity(msg.account.linkedIdentity);
+        if (Number.isFinite(msg.account.totalKills)) {
+          totalKills = msg.account.totalKills;
+        }
+      }
       if (!onboardingSeen && !onboardingIntroQueued) {
         onboardingIntroQueued = true;
         setTimeout(() => showTutorial(), 2000);
@@ -785,6 +951,7 @@ function handleMessage(msg) {
       if (Number.isFinite(msg.stompCooldown)) {
         setStompCooldownMs(msg.stompCooldown);
       }
+      updateAccountSummary();
       renderUpgradeShop();
       if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
       break;
@@ -804,11 +971,13 @@ function handleMessage(msg) {
       break;
     case 'payment_verified':
       isPaid = !!msg.isPaid;
+      applyServerWalletAddress(msg.walletAddress);
       applyPaidUI();
       if (isPaid) {
         setPaymentStatus('Payment verified. Save unlocked.', 'success');
         setTimeout(() => setPaymentModalOpen(false), 650);
       }
+      updateAccountSummary();
       break;
     case 'upgrade_purchased': {
       const def = UPGRADE_DEFS[msg.upgrade];
@@ -822,7 +991,7 @@ function handleMessage(msg) {
         );
       }
       if (Number.isFinite(msg.balance)) {
-        balance = msg.balance;
+        setAuthoritativeBalance(msg.balance);
       }
       if (Number.isFinite(msg.banked)) {
         bankedBalance = msg.banked;
@@ -832,6 +1001,7 @@ function handleMessage(msg) {
         setStompCooldownMs(msg.stompCooldown);
       }
       renderUpgradeShop();
+      updateAccountSummary();
       showUpgradePurchaseEffect(msg.upgrade, Number(msg.cost), msg.level);
       break;
     }
@@ -859,7 +1029,7 @@ function handleTick(msg) {
 
   // Update player stats
   if (msg.you) {
-    balance = msg.you.balance;
+    setAuthoritativeBalance(msg.you.balance);
     bankedBalance = msg.you.banked;
     if (typeof msg.you.isPaid === 'boolean' && msg.you.isPaid !== isPaid) {
       isPaid = msg.you.isPaid;
@@ -878,6 +1048,11 @@ function handleTick(msg) {
       }
       lastHealCount = msg.you.healCount;
     }
+    if (Number.isFinite(msg.you.totalKills)) {
+      totalKills = msg.you.totalKills;
+    }
+    applyServerWalletAddress(msg.you.walletAddress);
+    applyServerLinkedIdentity(msg.you.linkedIdentity);
   }
 
   // Reconcile prediction
@@ -973,7 +1148,7 @@ function handleEvent(evt) {
       AudioManager.play('stomp_kill', 0.7);
       if (evt.stomperId === myId) {
         kills++;
-        log(`<span class="kill">KILLED roach!</span> <span class="money">+${Math.floor(evt.reward)} $ROACH</span>`);
+        log(`<span class="kill">KILLED roach!</span> <span class="money">+${formatRoach(evt.reward)} $ROACH</span>`);
         showCoinShower(evt.x, evt.y, evt.reward);
         const killChimes = Math.max(1, Math.min(5, Math.ceil(evt.reward)));
         AudioManager.playCoins(killChimes, 0.5);
@@ -1023,7 +1198,7 @@ function handleEvent(evt) {
       break;
     case 'bank':
       if (evt.playerId === myId) {
-        log(`<span style="color:#f0c040">BANKED ${Math.floor(evt.amount)} $ROACH! Total: ${Math.floor(evt.totalBanked)} $ROACH</span>`);
+        log(`<span style="color:#f0c040">BANKED ${formatRoach(evt.amount)} $ROACH! Total: ${formatRoach(evt.totalBanked)} $ROACH</span>`);
         AudioManager.play('bank', 0.7);
         const bankChimes = Math.max(1, Math.min(5, Math.ceil(evt.amount)));
         AudioManager.playCoins(bankChimes, 0.45);
@@ -1109,6 +1284,7 @@ function applySnapshot(snapshot) {
   for (const r of snapshot.roaches) {
     updateRoachEl(r);
     if (r.id === myId) {
+      setAuthoritativeBalance(r.balance);
       predictedX = r.x;
       predictedY = r.y;
       predictedVx = r.vx;
@@ -1356,22 +1532,23 @@ function updateMotelDisplay() {
 
 // ==================== LEADERBOARD ====================
 function renderLeaderboard(data) {
+  leaderboardRows = Array.isArray(data) ? data : [];
   const tbody = document.getElementById('leaderboard-body');
   if (!tbody) return;
   tbody.innerHTML = '';
-  if (!data || data.length === 0) {
+  if (!leaderboardRows || leaderboardRows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="3" style="color:#666;text-align:center;padding:8px">No banked scores yet</td></tr>';
   } else {
-    for (let i = 0; i < data.length; i++) {
-      const entry = data[i];
+    for (let i = 0; i < leaderboardRows.length; i++) {
+      const entry = leaderboardRows[i];
       const tr = document.createElement('tr');
-      if (entry.id === myId) tr.className = 'me';
+      if (entry.id === sessionToken) tr.className = 'me';
       const rankTd = document.createElement('td');
       rankTd.textContent = i + 1;
       const nameTd = document.createElement('td');
-      nameTd.textContent = entry.name;
+      nameTd.textContent = getWalletIdentity(entry.wallet_address, entry.name);
       const ptsTd = document.createElement('td');
-      ptsTd.textContent = Math.floor(entry.banked_balance).toLocaleString();
+      ptsTd.textContent = formatRoachLocale(entry.banked_balance);
       tr.appendChild(rankTd);
       tr.appendChild(nameTd);
       tr.appendChild(ptsTd);
@@ -1401,11 +1578,48 @@ function renderLeaderboard(data) {
   }
 }
 
+function refreshAccountButton() {
+  if (!accountBtn) return;
+  accountBtn.classList.toggle('hidden', !sessionToken);
+}
+
+function updateAccountSummary() {
+  if (!accountWalletEl || !accountEarnedEl || !accountKillsEl || !accountUpgradesEl) return;
+  const walletIdentity = accountWalletAddress
+    ? getWalletIdentity(accountWalletAddress, shortAddress(accountWalletAddress))
+    : (accountLinkedIdentity || 'Not linked');
+  accountWalletEl.textContent = walletIdentity;
+  accountWalletEl.title = accountWalletAddress || accountLinkedIdentity || '';
+  accountEarnedEl.textContent = `${formatRoach(balance + bankedBalance)} $ROACH`;
+  accountKillsEl.textContent = Number(totalKills || 0).toLocaleString();
+
+  accountUpgradesEl.innerHTML = '';
+  const purchased = UPGRADE_ORDER.filter((key) => (upgrades[key] || 0) > 0);
+  if (purchased.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'None yet';
+    accountUpgradesEl.appendChild(li);
+    return;
+  }
+  for (const key of purchased) {
+    const li = document.createElement('li');
+    const def = UPGRADE_DEFS[key];
+    const level = upgrades[key] || 0;
+    li.textContent = `${def?.label || key} Lv ${level}`;
+    accountUpgradesEl.appendChild(li);
+  }
+}
+
+function setAccountModalOpen(isOpen) {
+  if (!accountModal) return;
+  accountModal.classList.toggle('visible', !!isOpen);
+  if (isOpen) updateAccountSummary();
+}
+
 // ==================== UI ====================
 function updateUI() {
   aliveTime = (Date.now() - lastAliveReset) / 1000;
-  balanceEl.textContent = balance.toFixed(1);
-  bankedEl.textContent = Math.floor(bankedBalance);
+  bankedEl.textContent = formatRoach(bankedBalance);
   document.getElementById('alive-time').textContent = Math.floor(aliveTime) + 's';
   document.getElementById('kills').textContent = kills;
   document.getElementById('current-room').textContent = currentRoom;
@@ -1431,10 +1645,8 @@ function updateUI() {
   }
 
   // Mobile HUD
-  const mBalance = document.getElementById('m-balance');
-  if (mBalance) {
-    mBalance.textContent = balance.toFixed(1);
-    if (mobileBankedEl) mobileBankedEl.textContent = Math.floor(bankedBalance);
+  if (mobileBalanceEl) {
+    if (mobileBankedEl) mobileBankedEl.textContent = formatRoach(bankedBalance);
     const mHpVal = myRoachData ? (myRoachData.hp % 1 === 0 ? myRoachData.hp : myRoachData.hp.toFixed(1)) : '?';
     document.getElementById('m-hp').textContent = `${mHpVal}/${BASE_HP}`;
     document.getElementById('m-kills').textContent = kills;
@@ -1451,6 +1663,7 @@ function updateUI() {
 
   updateSaveIntensity();
   renderUpgradeShop();
+  updateAccountSummary();
 }
 
 function escapeHtml(str) {
@@ -1583,7 +1796,7 @@ function showBankEffect(amount, total) {
   // 2. Big "BANKED!" text rising from player
   const banner = document.createElement('div');
   banner.className = 'bank-banner';
-  banner.innerHTML = `BANKED!<br><span style="font-size:0.6em">${Math.floor(amount)} $ROACH</span>`;
+  banner.innerHTML = `BANKED!<br><span style="font-size:0.6em">${formatRoach(amount)} $ROACH</span>`;
   banner.style.left = (predictedX + ROACH_WIDTH / 2) + 'px';
   banner.style.top = (predictedY - 20) + 'px';
   container.appendChild(banner);
@@ -1684,7 +1897,7 @@ function showBankEffect(amount, total) {
   setTimeout(() => {
     const totalEl = document.createElement('div');
     totalEl.className = 'bank-total';
-    totalEl.textContent = `Total: ${Math.floor(total)} $ROACH`;
+    totalEl.textContent = `Total: ${formatRoach(total)} $ROACH`;
     totalEl.style.left = (predictedX + ROACH_WIDTH / 2) + 'px';
     totalEl.style.top = (predictedY - 50) + 'px';
     container.appendChild(totalEl);
@@ -1773,7 +1986,7 @@ function showCoinShower(x, y, reward) {
   if (reward > 0.01) {
     const label = document.createElement('div');
     label.className = 'coin big';
-    label.textContent = '+' + Math.floor(reward) + ' $ROACH';
+    label.textContent = '+' + formatRoach(reward) + ' $ROACH';
     label.style.left = (x - 20) + 'px';
     label.style.top = (y - 10) + 'px';
     label.style.fontSize = (14 + killCombo * 3) + 'px';
@@ -1808,7 +2021,7 @@ function showCoinShower(x, y, reward) {
   }
 
   if (reward > 0.01) {
-    flyToBalance(flyStartX, flyStartY - 8, '+' + Math.floor(reward) + ' $ROACH', {
+    flyToBalance(flyStartX, flyStartY - 8, '+' + formatRoach(reward) + ' $ROACH', {
       big: true,
       delay: 120,
       duration: 1000,
@@ -2064,6 +2277,7 @@ document.addEventListener('keydown', (e) => {
     setShopModalOpen(false);
     setPaymentModalOpen(false);
     lbModal?.classList.remove('visible');
+    setAccountModalOpen(false);
     return;
   }
 
@@ -2157,6 +2371,11 @@ lbBtn?.addEventListener('click', () => lbModal?.classList.toggle('visible'));
 lbCloseBtn?.addEventListener('click', () => lbModal?.classList.remove('visible'));
 lbModal?.addEventListener('click', (e) => {
   if (e.target === lbModal) lbModal.classList.remove('visible');
+});
+accountBtn?.addEventListener('click', () => setAccountModalOpen(true));
+accountCloseBtn?.addEventListener('click', () => setAccountModalOpen(false));
+accountModal?.addEventListener('click', (e) => {
+  if (e.target === accountModal) setAccountModalOpen(false);
 });
 document.querySelectorAll('#upgrade-shop .upgrade-item').forEach((item) => {
   const key = item.dataset.upgrade || null;
@@ -2311,6 +2530,7 @@ function gameLoop() {
 
   // Predict
   predictFrame();
+  updateBalanceHud(now);
 
   // Render
   render();

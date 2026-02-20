@@ -367,7 +367,7 @@ const server = http.createServer(async (req, res) => {
 
       // Notify the game server so the player gets updated state immediately
       if (!markResult.alreadyPaid) {
-        gameServer.markPlayerPaid(playerId);
+        gameServer.markPlayerPaid(playerId, normalizedWallet);
       }
 
       res.writeHead(200, apiHeaders);

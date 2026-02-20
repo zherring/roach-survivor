@@ -390,7 +390,7 @@ const db = {
 
   async getLeaderboard(limit = 20) {
     const { rows } = await pool.query(
-      `SELECT id, name, banked_balance FROM players
+      `SELECT id, name, banked_balance, wallet_address FROM players
        WHERE banked_balance > 0
        ORDER BY banked_balance DESC
        LIMIT $1`,
