@@ -264,7 +264,6 @@ export class GameServer {
         walletAddress: player.walletAddress,
         linkedIdentity: player.linkedIdentity,
         totalKills: player.totalKills,
-        totalEarned: player.bankedBalance + player.roach.balance,
       },
     };
     this.send(ws, welcomeMsg);
@@ -610,7 +609,6 @@ export class GameServer {
           walletAddress: player.walletAddress,
           linkedIdentity: player.linkedIdentity,
           totalKills: player.totalKills || 0,
-          totalEarned: player.bankedBalance + player.roach.balance,
         },
       };
       if (minimapData) {

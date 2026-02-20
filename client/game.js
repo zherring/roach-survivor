@@ -302,6 +302,26 @@ function normalizeAddress(address) {
   return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed.toLowerCase() : '';
 }
 
+function applyServerWalletAddress(nextWalletAddress) {
+  if (nextWalletAddress === null) {
+    accountWalletAddress = null;
+    return;
+  }
+  if (typeof nextWalletAddress !== 'string') return;
+  const normalized = normalizeAddress(nextWalletAddress);
+  accountWalletAddress = normalized || null;
+}
+
+function applyServerLinkedIdentity(nextLinkedIdentity) {
+  if (nextLinkedIdentity === null) {
+    accountLinkedIdentity = null;
+    return;
+  }
+  if (typeof nextLinkedIdentity !== 'string') return;
+  const trimmed = nextLinkedIdentity.trim();
+  accountLinkedIdentity = trimmed.length > 0 ? trimmed : null;
+}
+
 async function getEnsProvider() {
   if (!ensProviderPromise) {
     ensProviderPromise = import('https://esm.sh/ethers@6')
@@ -450,11 +470,8 @@ function applyRecoveredAccount(restoreResult) {
   localStorage.setItem('roach_session_token', recoveredToken);
   refreshAccountButton();
   loadOnboardingState(recoveredToken);
-  const recoveredWallet = normalizeAddress(restoreResult?.walletAddress);
-  if (recoveredWallet) {
-    accountWalletAddress = recoveredWallet;
-    updateAccountSummary();
-  }
+  applyServerWalletAddress(restoreResult?.walletAddress ?? null);
+  updateAccountSummary();
 
   isPaid = true;
   applyPaidUI();
@@ -552,11 +569,6 @@ async function runPaymentFlow() {
     setPaymentStatus('Connecting wallet...');
     const wallet = await connectWallet();
     const { address } = wallet;
-    const normalizedWallet = normalizeAddress(address);
-    if (normalizedWallet) {
-      accountWalletAddress = normalizedWallet;
-      updateAccountSummary();
-    }
 
     setPaymentStatus('Checking for existing paid account...');
     let paidStatus = null;
@@ -908,16 +920,8 @@ function handleMessage(msg) {
       refreshAccountButton();
       loadOnboardingState(sessionToken || msg.token || null);
       if (msg.account && typeof msg.account === 'object') {
-        if (typeof msg.account.walletAddress === 'string' && normalizeAddress(msg.account.walletAddress)) {
-          accountWalletAddress = msg.account.walletAddress;
-        } else if (msg.account.walletAddress === null) {
-          accountWalletAddress = null;
-        }
-        if (typeof msg.account.linkedIdentity === 'string' && msg.account.linkedIdentity.length > 0) {
-          accountLinkedIdentity = msg.account.linkedIdentity;
-        } else if (msg.account.linkedIdentity === null) {
-          accountLinkedIdentity = null;
-        }
+        applyServerWalletAddress(msg.account.walletAddress);
+        applyServerLinkedIdentity(msg.account.linkedIdentity);
         if (Number.isFinite(msg.account.totalKills)) {
           totalKills = msg.account.totalKills;
         }
@@ -967,9 +971,7 @@ function handleMessage(msg) {
       break;
     case 'payment_verified':
       isPaid = !!msg.isPaid;
-      if (typeof msg.walletAddress === 'string' && normalizeAddress(msg.walletAddress)) {
-        accountWalletAddress = msg.walletAddress;
-      }
+      applyServerWalletAddress(msg.walletAddress);
       applyPaidUI();
       if (isPaid) {
         setPaymentStatus('Payment verified. Save unlocked.', 'success');
@@ -1049,12 +1051,8 @@ function handleTick(msg) {
     if (Number.isFinite(msg.you.totalKills)) {
       totalKills = msg.you.totalKills;
     }
-    if (typeof msg.you.walletAddress === 'string' && normalizeAddress(msg.you.walletAddress)) {
-      accountWalletAddress = msg.you.walletAddress;
-    }
-    if (typeof msg.you.linkedIdentity === 'string' && msg.you.linkedIdentity.length > 0) {
-      accountLinkedIdentity = msg.you.linkedIdentity;
-    }
+    applyServerWalletAddress(msg.you.walletAddress);
+    applyServerLinkedIdentity(msg.you.linkedIdentity);
   }
 
   // Reconcile prediction
@@ -1621,7 +1619,6 @@ function setAccountModalOpen(isOpen) {
 // ==================== UI ====================
 function updateUI() {
   aliveTime = (Date.now() - lastAliveReset) / 1000;
-  updateBalanceHud();
   bankedEl.textContent = formatRoach(bankedBalance);
   document.getElementById('alive-time').textContent = Math.floor(aliveTime) + 's';
   document.getElementById('kills').textContent = kills;
