@@ -48,6 +48,11 @@ async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions (updated_at);
     CREATE INDEX IF NOT EXISTS idx_players_platform ON players (platform_type, platform_id);
   `);
+
+  // Migration: hp column INTEGER -> DOUBLE PRECISION for fractional decay
+  await pool.query(`
+    ALTER TABLE sessions ALTER COLUMN hp TYPE DOUBLE PRECISION;
+  `).catch(() => { /* already migrated or column doesn't exist */ });
 }
 
 const db = {
@@ -165,7 +170,7 @@ const db = {
 
   async getLeaderboard(limit = 20) {
     const { rows } = await pool.query(
-      `SELECT name, banked_balance FROM players
+      `SELECT id, name, banked_balance FROM players
        WHERE banked_balance > 0
        ORDER BY banked_balance DESC
        LIMIT $1`,

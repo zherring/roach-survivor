@@ -3,7 +3,7 @@ import {
   BOOT_WIDTH, BOOT_HEIGHT, BOT_WIDTH, BOT_HEIGHT,
   PLAYER_BASE_SPEED, WEALTH_SPEED_PENALTY_MAX, WEALTH_SPEED_PENALTY_RATE,
   MIN_SPEED, TICK_RATE, MOTEL_SIZE, MOTEL_SAVE_TIME, GRID_SIZE,
-  HEAL_COST, MAX_HP,
+  HEAL_COST, MAX_HP, BASE_HP,
   UPGRADE_DEFS, UPGRADE_ORDER, createDefaultUpgrades, sanitizeUpgrades,
   getUpgradeCost, getBootScale, getMultiStompOffsets, getStompCooldownForLevel,
 } from '/shared/constants.js';
@@ -696,7 +696,7 @@ function handleEvent(evt) {
     case 'stomp_hit':
       AudioManager.play('stomp_hit', 0.5);
       if (evt.victimId === myId) {
-        log(`<span class="death">You got stomped! (${evt.hp}/${MAX_HP} HP)</span>`);
+        log(`<span class="death">You got stomped! (${evt.hp} HP)</span>`);
       }
       break;
     case 'stomp_miss':
@@ -719,7 +719,7 @@ function handleEvent(evt) {
     case 'bot_hit':
       AudioManager.play('stomp_hit', 0.4);
       if (evt.victimId === myId) {
-        log(`<span class="death">House bot hit you! (${evt.hp}/2 HP)</span>`);
+        log(`<span class="death">House bot hit you! (${evt.hp} HP)</span>`);
       }
       break;
     case 'player_death':
@@ -1078,7 +1078,7 @@ function renderLeaderboard(data) {
     for (let i = 0; i < data.length; i++) {
       const entry = data[i];
       const tr = document.createElement('tr');
-      if (entry.name === myName) tr.className = 'me';
+      if (entry.id === myId) tr.className = 'me';
       const rankTd = document.createElement('td');
       rankTd.textContent = i + 1;
       const nameTd = document.createElement('td');
@@ -1125,16 +1125,17 @@ function updateUI() {
 
   const myRoachData = roachEls.get(myId)?.data;
   if (myRoachData) {
-    document.getElementById('player-hp').textContent = myRoachData.hp;
+    const hpDisplay = myRoachData.hp % 1 === 0 ? myRoachData.hp : myRoachData.hp.toFixed(1);
+    document.getElementById('player-hp').textContent = hpDisplay;
   }
 
-  // Heal button
+  // Heal button — always available if you can afford it (additive healing, no cap)
   const healBtn = document.getElementById('heal-btn');
-  const healDisabled = !myRoachData || myRoachData.hp >= MAX_HP || balance < HEAL_COST;
+  const healDisabled = !myRoachData || balance < HEAL_COST;
   healBtn.disabled = healDisabled;
 
-  // Floating "SPACE TO HEAL" hint
-  if (myRoachData && myRoachData.hp < MAX_HP && balance >= HEAL_COST) {
+  // Floating "SPACE TO HEAL" hint — show when damaged below base HP
+  if (myRoachData && myRoachData.hp < BASE_HP && balance >= HEAL_COST) {
     healHint.classList.add('visible');
     healHint.style.left = (myRoachData.x + ROACH_WIDTH / 2) + 'px';
     healHint.style.top = (myRoachData.y - 12) + 'px';
@@ -1147,7 +1148,8 @@ function updateUI() {
   if (mBalance) {
     mBalance.textContent = Math.floor(balance);
     if (mobileBankedEl) mobileBankedEl.textContent = Math.floor(bankedBalance);
-    document.getElementById('m-hp').textContent = myRoachData ? `${myRoachData.hp}/${MAX_HP}` : `?/${MAX_HP}`;
+    const mHpVal = myRoachData ? (myRoachData.hp % 1 === 0 ? myRoachData.hp : myRoachData.hp.toFixed(1)) : '?';
+    document.getElementById('m-hp').textContent = `${mHpVal}/${BASE_HP}`;
     document.getElementById('m-kills').textContent = kills;
     const mHealBtn = document.getElementById('mobile-heal-btn');
     if (mHealBtn) mHealBtn.disabled = healDisabled;

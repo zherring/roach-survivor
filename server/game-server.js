@@ -1,6 +1,6 @@
 import {
-  TICK_RATE, GRID_SIZE, CONTAINER_WIDTH, CONTAINER_HEIGHT,
-  ROACH_WIDTH, ROACH_HEIGHT, HEAL_COST, MAX_HP,
+  TICK_RATE, TICKS_PER_SEC, GRID_SIZE, CONTAINER_WIDTH, CONTAINER_HEIGHT,
+  ROACH_WIDTH, ROACH_HEIGHT, HEAL_COST, MAX_HP, BASE_HP, HP_DECAY_RATE,
   UPGRADE_DEFS, getUpgradeCost, sanitizeUpgrades, createDefaultUpgrades,
   getStompCooldownForLevel, getBootScale,
 } from '../shared/constants.js';
@@ -104,6 +104,11 @@ export class GameServer {
   async init() {
     const cleaned = await db.cleanStaleSessions();
     if (cleaned) console.log(`Cleaned ${cleaned} stale sessions`);
+    try {
+      this.leaderboardCache = await db.getLeaderboard(20);
+    } catch (e) {
+      console.error('Failed to load initial leaderboard:', e.message);
+    }
   }
 
   start() {
@@ -303,10 +308,10 @@ export class GameServer {
         const healNow = Date.now();
         if (healNow - player.lastHeal < HEAL_COOLDOWN) break;
         const roach = player.roach;
-        if (roach.hp >= MAX_HP || roach.balance < HEAL_COST) break;
+        if (roach.balance < HEAL_COST) break;
         player.lastHeal = healNow;
         roach.balance -= HEAL_COST;
-        roach.hp = Math.min(roach.hp + 1, MAX_HP);
+        roach.hp += 1; // additive — no cap, decays back to BASE_HP over time
         roach.healCount++;
         break;
       }
@@ -434,6 +439,15 @@ export class GameServer {
       }
     }
 
+    // HP decay: player HP above BASE_HP decays at HP_DECAY_RATE per second
+    const hpDecayPerTick = HP_DECAY_RATE / TICKS_PER_SEC;
+    for (const [, player] of this.players) {
+      const roach = player.roach;
+      if (!roach.isDead && roach.hp > BASE_HP) {
+        roach.hp = Math.max(BASE_HP, roach.hp - hpDecayPerTick);
+      }
+    }
+
     // Periodic session save (every 200 ticks = ~10s)
     this.sessionSaveTimer++;
     if (this.sessionSaveTimer >= 200) {
@@ -521,7 +535,8 @@ export class GameServer {
           id,
           balance: player.roach.balance,
           banked: player.bankedBalance,
-          hp: player.roach.hp,
+          hp: Math.round(player.roach.hp * 10) / 10,
+          baseHp: BASE_HP,
           lastInputSeq: player.roach.lastInputSeq,
           healCount: player.roach.healCount,
           upgrades: { ...player.upgrades },

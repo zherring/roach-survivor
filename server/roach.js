@@ -1,7 +1,7 @@
 import {
   CONTAINER_WIDTH, CONTAINER_HEIGHT, ROACH_WIDTH, ROACH_HEIGHT,
   PLAYER_BASE_SPEED, NPC_BASE_SPEED, WEALTH_SPEED_PENALTY_MAX,
-  WEALTH_SPEED_PENALTY_RATE, MIN_SPEED, MAX_HP, DEATH_PENALTY,
+  WEALTH_SPEED_PENALTY_RATE, MIN_SPEED, MAX_HP, BASE_HP, DEATH_PENALTY,
 } from '../shared/constants.js';
 
 let nextId = 0;
@@ -13,7 +13,7 @@ export class Roach {
     this.y = Math.random() * (CONTAINER_HEIGHT - ROACH_HEIGHT) + ROACH_HEIGHT / 2;
     this.vx = (Math.random() - 0.5) * 2;
     this.vy = (Math.random() - 0.5) * 2;
-    this.hp = MAX_HP;
+    this.hp = BASE_HP;
     this.balance = startBalance;
     this.isPlayer = isPlayer;
     this.isDead = false;
@@ -152,7 +152,7 @@ export class Roach {
   respawn() {
     this.x = Math.random() * (CONTAINER_WIDTH - 20) + 10;
     this.y = Math.random() * (CONTAINER_HEIGHT - 20) + 10;
-    this.hp = MAX_HP;
+    this.hp = BASE_HP;
     this.isDead = false;
     this.vx = (Math.random() - 0.5) * 2;
     this.vy = (Math.random() - 0.5) * 2;
@@ -174,7 +174,7 @@ export class Roach {
       y: Math.round(this.y * 10) / 10,
       vx: Math.round(this.vx * 100) / 100,
       vy: Math.round(this.vy * 100) / 100,
-      hp: this.hp,
+      hp: Math.round(this.hp * 10) / 10,
       balance: Math.round(this.balance * 100) / 100,
       dead: this.isDead,
       isPlayer: this.isPlayer,
