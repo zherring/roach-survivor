@@ -8,6 +8,7 @@ import { GameServer } from './game-server.js';
 import { db, initDB } from './db.js';
 
 const PORT = process.env.PORT || 3000;
+const SHUTDOWN_TIMEOUT_MS = 8000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
@@ -26,6 +27,12 @@ const MIME = {
 const server = http.createServer((req, res) => {
   // Parse URL to strip query strings
   const urlPath = new URL(req.url, `http://${req.headers.host}`).pathname;
+
+  if (urlPath === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('ok');
+    return;
+  }
 
   let filePath;
   if (urlPath === '/' || urlPath === '/index.html') {
@@ -79,14 +86,21 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 const gameServer = new GameServer();
+let isShuttingDown = false;
+const pendingRemovals = new Set();
 
 wss.on('connection', (ws) => {
+  if (isShuttingDown) {
+    ws.close(1012, 'Server shutting down');
+    return;
+  }
+
   let playerId = null;
   let initialized = false;
 
   // Set a timeout — if no message arrives within 1s, add as new player
   const initTimeout = setTimeout(() => {
-    if (!initialized) {
+    if (!initialized && !isShuttingDown) {
       initialized = true;
       gameServer.addPlayer(ws).then(id => {
         playerId = id;
@@ -96,6 +110,8 @@ wss.on('connection', (ws) => {
 
   ws.on('message', async (data) => {
     try {
+      if (isShuttingDown) return;
+
       const msg = JSON.parse(data);
 
       // First message: check for reconnect token and/or platform identity
@@ -132,24 +148,84 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', async () => {
+  ws.on('close', () => {
     clearTimeout(initTimeout);
-    if (playerId) {
-      await gameServer.removePlayer(playerId);
-    }
+    if (!playerId || isShuttingDown) return;
+
+    let removalPromise;
+    removalPromise = gameServer.removePlayer(playerId)
+      .catch(err => console.error('removePlayer error:', err?.message || err))
+      .finally(() => {
+        pendingRemovals.delete(removalPromise);
+      });
+    pendingRemovals.add(removalPromise);
   });
 });
 
 // Graceful shutdown
-async function shutdown() {
-  console.log('Shutting down...');
-  await gameServer.saveSessions();
-  await db.close();
-  console.log('State saved. Exiting.');
-  process.exit(0);
+async function shutdown(signal = 'unknown', exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  const uptimeSec = Math.round(process.uptime());
+  const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  console.log(`Shutting down (${signal})... uptime=${uptimeSec}s rss=${rssMb}MB`);
+
+  gameServer.stop();
+
+  // Persist active sessions before disconnecting clients.
+  try {
+    await Promise.race([
+      gameServer.saveSessions(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('saveSessions timeout')), SHUTDOWN_TIMEOUT_MS)),
+    ]);
+  } catch (err) {
+    console.error('Shutdown saveSessions error:', err?.message || err);
+  }
+
+  // Stop accepting traffic after state is persisted.
+  await Promise.race([
+    new Promise(resolve => wss.close(() => resolve())),
+    new Promise(resolve => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS)),
+  ]);
+  await Promise.race([
+    new Promise(resolve => server.close(() => resolve())),
+    new Promise(resolve => setTimeout(resolve, SHUTDOWN_TIMEOUT_MS)),
+  ]);
+
+  // Flush any disconnect removals that started before shutdown.
+  if (pendingRemovals.size > 0) {
+    try {
+      await Promise.race([
+        Promise.allSettled([...pendingRemovals]),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('removePlayer flush timeout')), SHUTDOWN_TIMEOUT_MS)),
+      ]);
+    } catch (err) {
+      console.error('Shutdown removePlayer flush error:', err?.message || err);
+    }
+  }
+
+  try {
+    await Promise.race([
+      db.close(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('db.close timeout')), SHUTDOWN_TIMEOUT_MS)),
+    ]);
+  } catch (err) {
+    console.error('Shutdown db.close error:', err?.message || err);
+  }
+
+  console.log('Shutdown complete. Exiting.');
+  process.exit(exitCode);
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => shutdown('SIGTERM', 0));
+process.on('SIGINT', () => shutdown('SIGINT', 0));
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err?.stack || err?.message || err);
+  shutdown('uncaughtException', 1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
 
 // Initialize DB, then start
 (async () => {
