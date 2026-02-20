@@ -86,6 +86,8 @@ export class GameServer {
     this.tickCount = 0;
     this.botAdjustTimer = 0;
     this.sessionSaveTimer = 0;
+    this.leaderboardCache = [];
+    this.leaderboardTimer = 0;
 
     // Create 3x3 grid
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -102,6 +104,11 @@ export class GameServer {
   async init() {
     const cleaned = await db.cleanStaleSessions();
     if (cleaned) console.log(`Cleaned ${cleaned} stale sessions`);
+    try {
+      this.leaderboardCache = await db.getLeaderboard(20);
+    } catch (e) {
+      console.error('Failed to load initial leaderboard:', e.message);
+    }
   }
 
   start() {
@@ -204,7 +211,7 @@ export class GameServer {
     this.players.set(roach.id, player);
 
     // Send welcome with full snapshot
-    this.send(ws, {
+    const welcomeMsg = {
       type: 'welcome',
       id: roach.id,
       token,
@@ -217,7 +224,9 @@ export class GameServer {
       upgrades: { ...upgrades },
       stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
       linkedPlatform: linkedPlatform || undefined,
-    });
+      leaderboard: this.leaderboardCache,
+    };
+    this.send(ws, welcomeMsg);
 
     console.log(`Player joined: ${name} (${roach.id}) in room ${roomKey}`);
     return roach.id;
@@ -446,6 +455,15 @@ export class GameServer {
       this.saveSessions().catch(err => console.error('DB session save error:', err.message));
     }
 
+    // Refresh leaderboard cache every 100 ticks (~5s)
+    this.leaderboardTimer++;
+    if (this.leaderboardTimer >= 100) {
+      this.leaderboardTimer = 0;
+      db.getLeaderboard(20).then(rows => {
+        this.leaderboardCache = rows;
+      }).catch(err => console.error('DB leaderboard error:', err.message));
+    }
+
     // Adjust bots every ~60 ticks (3 seconds)
     this.botAdjustTimer++;
     if (this.botAdjustTimer >= 60) {
@@ -527,6 +545,9 @@ export class GameServer {
       };
       if (minimapData) {
         tickMsg.minimap = minimapData;
+      }
+      if (this.leaderboardTimer === 0 && this.leaderboardCache.length > 0) {
+        tickMsg.leaderboard = this.leaderboardCache;
       }
       this.send(player.ws, tickMsg);
     }
