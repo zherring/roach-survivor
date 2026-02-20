@@ -293,6 +293,15 @@ function normalizeWalletActionError(err, fallback = 'Wallet action failed.') {
   ) {
     return 'Wallet request was canceled.';
   }
+  if (lower.includes('transfer amount exceeds balance') || lower.includes('not enough usdc balance')) {
+    return 'Not enough USDC for this payment.';
+  }
+  if (lower.includes('insufficient funds')) {
+    return 'Not enough ETH on Base to cover gas fees.';
+  }
+  if (lower.includes('missing revert data') && lower.includes('estimategas')) {
+    return 'Wallet failed to estimate gas. Reopen the miniapp and try again.';
+  }
   return raw || fallback;
 }
 
