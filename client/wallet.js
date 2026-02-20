@@ -9,7 +9,45 @@ let ethers = null;
 
 const USDC_ABI = [
   'function transfer(address to, uint256 amount) returns (bool)',
+  'function balanceOf(address account) view returns (uint256)',
 ];
+
+const TX_RECEIPT_TIMEOUT_MS = 90_000;
+const TX_RECEIPT_POLL_MS = 1_500;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForReceipt(provider, txHash) {
+  const deadline = Date.now() + TX_RECEIPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const receipt = await provider.getTransactionReceipt(txHash).catch(() => null);
+    if (receipt) return receipt;
+    await sleep(TX_RECEIPT_POLL_MS);
+  }
+  throw new Error('Transaction submitted but not confirmed yet. Check your wallet activity and try again.');
+}
+
+async function canUseFarcasterSendToken() {
+  try {
+    await platform.init();
+  } catch {
+    return false;
+  }
+  if (!platform.sdk?.actions || typeof platform.sdk.actions.sendToken !== 'function') {
+    return false;
+  }
+  if (typeof platform.sdk.getCapabilities === 'function') {
+    try {
+      const capabilities = await platform.sdk.getCapabilities();
+      return capabilities.includes('actions.sendToken');
+    } catch {
+      // Ignore and fall back to SDK shape check.
+    }
+  }
+  return platform.type === 'farcaster';
+}
 
 async function loadEthers() {
   if (ethers) return ethers;
@@ -92,16 +130,49 @@ export async function getWalletPaidStatus(walletAddress) {
 
 export async function sendUSDCPayment(recipientAddress, amountUSDC, walletContext = null) {
   const lib = await loadEthers();
-  const signer = walletContext?.signer || (await connectWallet()).signer;
+  const wallet = walletContext || await connectWallet();
+  const { provider, signer } = wallet;
 
   if (!recipientAddress || typeof recipientAddress !== 'string') {
     throw new Error('Missing payment recipient address.');
   }
 
   const amountUnits = lib.parseUnits(String(amountUSDC), USDC_DECIMALS);
+  if (amountUnits <= 0n) {
+    throw new Error('Payment amount must be greater than zero.');
+  }
+
+  const senderAddress = wallet.address || (await signer.getAddress()).toLowerCase();
+  const readOnlyUsdc = new lib.Contract(USDC_CONTRACT_ADDRESS, USDC_ABI, provider);
+  const balance = await readOnlyUsdc.balanceOf(senderAddress);
+  if (balance < amountUnits) {
+    throw new Error('Not enough USDC balance for this payment.');
+  }
+
+  if (await canUseFarcasterSendToken()) {
+    const result = await platform.sdk.actions.sendToken({
+      token: `eip155:${BASE_CHAIN_ID}/erc20:${USDC_CONTRACT_ADDRESS}`,
+      amount: amountUnits.toString(),
+      recipientAddress,
+    });
+
+    if (!result?.success || !result?.send?.transaction) {
+      if (result?.reason === 'rejected_by_user') {
+        throw new Error('Wallet request was canceled.');
+      }
+      const detail = result?.error?.message || result?.error?.error || 'Farcaster wallet failed to send USDC.';
+      throw new Error(detail);
+    }
+
+    const receipt = await waitForReceipt(provider, result.send.transaction);
+    return {
+      txHash: receipt?.hash || result.send.transaction,
+    };
+  }
+
   const usdc = new lib.Contract(USDC_CONTRACT_ADDRESS, USDC_ABI, signer);
   const tx = await usdc.transfer(recipientAddress, amountUnits);
-  const receipt = await tx.wait();
+  const receipt = await tx.wait(1);
 
   return {
     txHash: receipt?.hash || tx.hash,

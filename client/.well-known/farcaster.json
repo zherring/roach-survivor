@@ -8,7 +8,11 @@
     "buttonTitle": "Play $ROACH",
     "splashImageUrl": "https://roachsurvivor.com/assets/splash.png",
     "splashBackgroundColor": "#000000",
-    "requiredChains": ["eip155:8453"]
+    "requiredChains": ["eip155:8453"],
+    "requiredCapabilities": [
+      "wallet.getEthereumProvider",
+      "actions.sendToken"
+    ]
   },
   "accountAssociation": {
     "header": "eyJmaWQiOjUwNjIsInR5cGUiOiJjdXN0b2R5Iiwia2V5IjoiMHhFRDZBMERGNjY2OTQxZDREMGZBNjNmMEYzZGU3ZWEzZkNGODZlZEREIn0",
