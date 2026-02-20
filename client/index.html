@@ -434,7 +434,7 @@
         display: block !important;
         position: fixed;
         top: 2px;
-        right: 46px;
+        right: 106px;
         z-index: 3000;
         font-size: 9px;
         margin: 0;
@@ -449,6 +449,13 @@
       #lb-btn {
         top: 2px;
         right: 38px;
+        width: 30px;
+        height: 30px;
+        font-size: 14px;
+      }
+      #acct-btn {
+        top: 2px;
+        right: 72px;
         width: 30px;
         height: 30px;
         font-size: 14px;
@@ -1127,6 +1134,25 @@
       line-height: 1;
     }
     #lb-btn:hover { border-color: #f0c040; color: #fff; }
+    #acct-btn {
+      position: fixed;
+      top: 8px;
+      right: 96px;
+      z-index: 3000;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid #444;
+      color: #b6f258;
+      font-family: monospace;
+      font-size: 16px;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    #acct-btn:hover { border-color: #b6f258; color: #fff; }
     #leaderboard-modal {
       position: fixed;
       inset: 0;
@@ -1197,6 +1223,78 @@
     #leaderboard-table td:last-child { text-align: right; color: #ff0; }
     #leaderboard-table tr.me td { color: #0ff; font-weight: bold; }
     #leaderboard-table tr.me td:last-child { color: #0ff; }
+
+    /* ==================== ACCOUNT MODAL ==================== */
+    #account-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 5000;
+      padding: 14px;
+    }
+    #account-modal.visible { display: flex; }
+    #account-inner {
+      background: #111;
+      border: 2px solid #b6f258;
+      padding: 16px 20px;
+      width: min(420px, 90vw);
+      max-height: 80vh;
+      overflow-y: auto;
+      position: relative;
+      font-family: monospace;
+    }
+    #account-close {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 20px;
+      cursor: pointer;
+      font-family: monospace;
+    }
+    #account-close:hover { color: #fff; }
+    #account-label {
+      color: #b6f258;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+    .account-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid #1d1d1d;
+      color: #aaa;
+      font-size: 12px;
+    }
+    .account-row strong {
+      color: #e7e7e7;
+      font-weight: normal;
+      text-align: right;
+      word-break: break-all;
+    }
+    #account-upgrades-label {
+      color: #7a7a7a;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 10px;
+      margin-bottom: 6px;
+    }
+    #account-upgrades {
+      margin: 0;
+      padding-left: 16px;
+      color: #e7e7e7;
+      font-size: 12px;
+      line-height: 1.5;
+    }
 
     /* ==================== TUTORIAL OVERLAY ==================== */
     #tutorial-overlay {
@@ -1504,6 +1602,7 @@
   </style>
 </head>
 <body>
+  <button id="acct-btn" class="hidden" title="Account summary">🪳</button>
   <button id="lb-btn" title="Leaderboard">🏆</button>
   <button id="mute-btn" title="Toggle sound">♪</button>
 
@@ -1704,9 +1803,21 @@
         <span id="lb-reset"></span>
       </div>
       <table id="leaderboard-table">
-        <thead><tr><th>#</th><th>Name</th><th>$ROACH</th></tr></thead>
+        <thead><tr><th>#</th><th>Player</th><th>$ROACH</th></tr></thead>
         <tbody id="leaderboard-body"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div id="account-modal">
+    <div id="account-inner">
+      <button id="account-close" aria-label="Close account summary">x</button>
+      <div id="account-label">Roach Account</div>
+      <div class="account-row"><span>Wallet / Link</span><strong id="acct-wallet">Not linked</strong></div>
+      <div class="account-row"><span>Total earned</span><strong id="acct-earned">0.0000 $ROACH</strong></div>
+      <div class="account-row"><span>Total kills</span><strong id="acct-kills">0</strong></div>
+      <div id="account-upgrades-label">Purchased upgrades</div>
+      <ul id="account-upgrades"></ul>
     </div>
   </div>
 
