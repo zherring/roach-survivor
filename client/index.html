@@ -10,8 +10,12 @@
   <meta property="og:image" content="https://roach-survivor-production.up.railway.app/assets/og-image.png">
   <meta property="og:type" content="website">
   <!-- Farcaster miniapp meta -->
-  <meta name="fc:frame" content="vNext">
-  <meta name="fc:frame:image" content="https://roach-survivor-production.up.railway.app/assets/og-image.png">
+  <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://roach-survivor-production.up.railway.app/assets/og-image.png","button":{"title":"Play","action":{"type":"launch_frame","name":"Roach Survivor","url":"https://roach-survivor-production.up.railway.app/","splashImageUrl":"https://roach-survivor-production.up.railway.app/assets/splash.png","splashBackgroundColor":"#111111"}}}'>
+  <meta property="fc:frame" content="vNext">
+  <meta property="fc:frame:image" content="https://roach-survivor-production.up.railway.app/assets/og-image.png">
+  <meta property="fc:frame:button:1" content="Play">
+  <meta property="fc:frame:button:1:action" content="link">
+  <meta property="fc:frame:button:1:target" content="https://roach-survivor-production.up.railway.app/">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -1248,6 +1252,29 @@
     #leaderboard-table td:last-child { text-align: right; color: #ff0; }
     #leaderboard-table tr.me td { color: #0ff; font-weight: bold; }
     #leaderboard-table tr.me td:last-child { color: #0ff; }
+    .lb-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      align-items: center;
+    }
+    .lb-action-btn {
+      border: 1px solid #0a0;
+      background: #042;
+      color: #9f9;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 6px 9px;
+      cursor: pointer;
+    }
+    .lb-action-btn:hover { background: #064; }
+    .lb-action-status {
+      font-size: 11px;
+      color: #9ad;
+      min-height: 14px;
+      flex: 1;
+    }
 
     /* ==================== ACCOUNT MODAL ==================== */
     #account-modal {
@@ -1831,6 +1858,12 @@
       <div id="leaderboard-info">
         <span id="lb-payout">Payout: Sunday</span>
         <span id="lb-reset"></span>
+      </div>
+      <div id="lb-rank-callout">Play this week to lock in a leaderboard rank.</div>
+      <div class="lb-actions">
+        <button id="lb-share-btn" class="lb-action-btn">Share on Farcaster</button>
+        <button id="lb-invite-btn" class="lb-action-btn">Copy challenge link</button>
+        <span id="lb-action-status" class="lb-action-status"></span>
       </div>
       <table id="leaderboard-table">
         <thead><tr><th>#</th><th>Player</th><th>$ROACH</th></tr></thead>

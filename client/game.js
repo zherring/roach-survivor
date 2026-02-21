@@ -207,6 +207,10 @@ const shopModal = document.getElementById('shop-modal');
 const lbModal = document.getElementById('leaderboard-modal');
 const lbBtn = document.getElementById('lb-btn');
 const lbCloseBtn = document.getElementById('leaderboard-close');
+const lbShareBtn = document.getElementById('lb-share-btn');
+const lbInviteBtn = document.getElementById('lb-invite-btn');
+const lbActionStatusEl = document.getElementById('lb-action-status');
+const lbRankCalloutEl = document.getElementById('lb-rank-callout');
 const accountBtn = document.getElementById('acct-btn');
 const accountModal = document.getElementById('account-modal');
 const accountCloseBtn = document.getElementById('account-close');
@@ -254,6 +258,8 @@ const ENS_LOOKUP_RPC_URL = 'https://ethereum-rpc.publicnode.com';
 let accountWalletAddress = null;
 let accountLinkedIdentity = null;
 let leaderboardRows = [];
+const APP_URL = 'https://roach-survivor-production.up.railway.app/';
+const CHALLENGE_PARAM = 'challenge';
 const ensNameCache = new Map(); // lowercased address -> ENS name (or '' if none)
 const ensPending = new Set();
 let ensProviderPromise = null;
@@ -1531,6 +1537,76 @@ function updateMotelDisplay() {
   }
 }
 
+function setLeaderboardActionStatus(text, isError = false) {
+  if (!lbActionStatusEl) return;
+  lbActionStatusEl.textContent = text || '';
+  lbActionStatusEl.style.color = isError ? '#f88' : '#9ad';
+}
+
+function getMyLeaderboardRank() {
+  if (!Array.isArray(leaderboardRows) || !sessionToken) return null;
+  for (let i = 0; i < leaderboardRows.length; i++) {
+    const entry = leaderboardRows[i];
+    if (entry?.id === sessionToken) {
+      return {
+        rank: i + 1,
+        score: Number(entry.banked_balance || 0),
+      };
+    }
+  }
+  return null;
+}
+
+function getFarcasterShareText() {
+  const ranking = getMyLeaderboardRank();
+  if (!ranking) {
+    return "I’m climbing the weekly board on Roach Survivor. Come stomp with me 🪳";
+  }
+  return `I’m #${ranking.rank} this week on Roach Survivor 🪳 Can you beat me?`;
+}
+
+async function shareToFarcasterFromLeaderboard() {
+  const ranking = getMyLeaderboardRank();
+  if (!ranking) {
+    setLeaderboardActionStatus('Play and bank $ROACH to unlock rank sharing.', true);
+    return;
+  }
+
+  const text = getFarcasterShareText();
+  try {
+    if (platform.type === 'farcaster' && platform.sdk?.actions?.composeCast) {
+      await platform.sdk.actions.composeCast({
+        text,
+        embeds: [APP_URL],
+      });
+      setLeaderboardActionStatus('Opened Farcaster composer.');
+      return;
+    }
+
+    const warpcastIntent = `https://warpcast.com/~/compose?text=${encodeURIComponent(text)}&embeds[]=${encodeURIComponent(APP_URL)}`;
+    window.open(warpcastIntent, '_blank', 'noopener,noreferrer');
+    setLeaderboardActionStatus('Opened Warpcast composer in a new tab.');
+  } catch (err) {
+    console.warn('[share] failed to share leaderboard rank', err);
+    setLeaderboardActionStatus('Could not open Farcaster composer. Try again.', true);
+  }
+}
+
+async function copyChallengeLink() {
+  const ranking = getMyLeaderboardRank();
+  const rankLabel = ranking ? `#${ranking.rank}` : 'unranked';
+  const shareUrl = new URL(APP_URL);
+  shareUrl.searchParams.set(CHALLENGE_PARAM, rankLabel);
+
+  try {
+    await navigator.clipboard.writeText(shareUrl.toString());
+    setLeaderboardActionStatus(`Challenge link copied (${rankLabel}).`);
+  } catch (err) {
+    console.warn('[share] failed to copy challenge link', err);
+    setLeaderboardActionStatus('Clipboard unavailable. Long-press URL bar to copy manually.', true);
+  }
+}
+
 // ==================== LEADERBOARD ====================
 function renderLeaderboard(data) {
   leaderboardRows = Array.isArray(data) ? data : [];
@@ -1576,6 +1652,13 @@ function renderLeaderboard(data) {
       resetEl.textContent = `Resets in ${days}d ${remainHours}h`;
       resetEl.style.color = '#f44';
     }
+  }
+
+  if (lbRankCalloutEl) {
+    const ranking = getMyLeaderboardRank();
+    lbRankCalloutEl.textContent = ranking
+      ? `You are #${ranking.rank} this week. Share your rank and challenge friends.`
+      : 'Play this week to lock in a leaderboard rank.';
   }
 }
 
@@ -2378,8 +2461,17 @@ shopModal?.addEventListener('click', (e) => {
 paymentModal?.addEventListener('click', (e) => {
   if (e.target === paymentModal && !paymentInFlight) setPaymentModalOpen(false);
 });
-lbBtn?.addEventListener('click', () => lbModal?.classList.toggle('visible'));
+lbBtn?.addEventListener('click', () => {
+  lbModal?.classList.toggle('visible');
+  setLeaderboardActionStatus('');
+});
 lbCloseBtn?.addEventListener('click', () => lbModal?.classList.remove('visible'));
+lbShareBtn?.addEventListener('click', () => {
+  shareToFarcasterFromLeaderboard();
+});
+lbInviteBtn?.addEventListener('click', () => {
+  copyChallengeLink();
+});
 lbModal?.addEventListener('click', (e) => {
   if (e.target === lbModal) lbModal.classList.remove('visible');
 });
