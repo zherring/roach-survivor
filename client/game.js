@@ -202,7 +202,6 @@ const mobileBankedEl = document.getElementById('m-banked');
 const saveGameBtn = document.getElementById('save-game-btn');
 const savePriceEl = document.getElementById('save-price');
 const mobileSaveBtn = document.getElementById('mobile-save-btn');
-const mobileSavedBadge = document.getElementById('mobile-saved-badge');
 const mobileSaveNudge = document.getElementById('mobile-save-nudge');
 const shopModal = document.getElementById('shop-modal');
 const lbModal = document.getElementById('leaderboard-modal');
@@ -512,7 +511,6 @@ function applyPaidUI() {
   openShopBtn?.classList.toggle('hidden', !paid);
   mobileSaveBtn?.classList.toggle('hidden', paid);
   mobileOpenShopBtn?.classList.toggle('hidden', !paid);
-  mobileSavedBadge?.classList.toggle('hidden', !paid);
 
   if (paid) {
     saveGameBtn?.classList.add('saved');
