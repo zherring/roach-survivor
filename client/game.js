@@ -214,6 +214,9 @@ const accountWalletEl = document.getElementById('acct-wallet');
 const accountEarnedEl = document.getElementById('acct-earned');
 const accountKillsEl = document.getElementById('acct-kills');
 const accountUpgradesEl = document.getElementById('account-upgrades');
+const shopOvBalanceEl = document.getElementById('shop-ov-balance');
+const shopOvBankedEl = document.getElementById('shop-ov-banked');
+const shopOvHpEl = document.getElementById('shop-ov-hp');
 const shopPanelEl = document.getElementById('shop-panel');
 const openShopBtn = document.getElementById('open-shop-btn');
 const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
@@ -1650,6 +1653,16 @@ function updateUI() {
     document.getElementById('m-kills').textContent = kills;
     const mHealBtn = document.getElementById('mobile-heal-btn');
     if (mHealBtn) mHealBtn.disabled = healDisabled;
+  }
+
+  // Shop overlay stats (visible when store is open)
+  if (shopModal && shopModal.classList.contains('visible')) {
+    if (shopOvBalanceEl) shopOvBalanceEl.textContent = formatRoach(displayBalance);
+    if (shopOvBankedEl) shopOvBankedEl.textContent = formatRoach(bankedBalance);
+    if (shopOvHpEl) {
+      const ovHp = myRoachData ? (myRoachData.hp % 1 === 0 ? myRoachData.hp : myRoachData.hp.toFixed(1)) : '?';
+      shopOvHpEl.textContent = `${ovHp}/${BASE_HP}`;
+    }
   }
 
   // Player count

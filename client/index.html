@@ -286,6 +286,27 @@
       opacity: 1;
       border-bottom-color: #f0d878;
     }
+    #shop-stats-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 5100;
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      padding: 10px 14px;
+      background: rgba(0, 0, 0, 0.85);
+      border-bottom: 1px solid #333;
+      font-family: monospace;
+      font-size: 13px;
+    }
+    .shop-stat { color: #aaa; }
+    .shop-stat strong { font-weight: bold; }
+    #shop-ov-balance { color: #ff0; }
+    #shop-ov-banked { color: #f0c040; }
+    #shop-ov-hp { color: #0f0; }
+
     #shop-modal #upgrade-shop {
       max-height: none;
       flex: 1 1 auto;
@@ -534,6 +555,11 @@
       }
       .shop-category-row {
         padding-right: 30px;
+      }
+      #shop-stats-overlay {
+        font-size: 12px;
+        gap: 12px;
+        padding: 8px 10px;
       }
       #shop-modal #upgrade-shop {
         grid-template-columns: 1fr;
@@ -1698,6 +1724,11 @@
   </div>
 
   <div id="shop-modal">
+    <div id="shop-stats-overlay">
+      <span class="shop-stat">$ROACH: <strong id="shop-ov-balance">0</strong></span>
+      <span class="shop-stat">Banked: <strong id="shop-ov-banked">0</strong></span>
+      <span class="shop-stat">HP: <strong id="shop-ov-hp">2</strong></span>
+    </div>
     <div class="shop-modal-layout">
       <div id="shop-helper-column">
         <div id="shop-prospector-text">Hover an upgrade and I'll tell ya what it does.</div>
