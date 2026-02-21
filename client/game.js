@@ -258,7 +258,6 @@ let accountLinkedIdentity = null;
 let leaderboardRows = [];
 const APP_URL = 'https://roach-survivor-production.up.railway.app/';
 const CHALLENGE_PARAM = 'challenge';
-const RETURN_PLAYER_DAYS = 3;
 const ensNameCache = new Map(); // lowercased address -> ENS name (or '' if none)
 const ensPending = new Set();
 let ensProviderPromise = null;
@@ -1607,19 +1606,6 @@ async function copyChallengeLink() {
   }
 }
 
-function getReturnPromptMessage() {
-  const key = `roach_last_seen_${sessionToken || 'anon'}`;
-  const now = Date.now();
-  const previous = Number(localStorage.getItem(key) || 0);
-  localStorage.setItem(key, String(now));
-  if (!previous) return '';
-
-  const elapsedMs = now - previous;
-  const thresholdMs = RETURN_PLAYER_DAYS * 24 * 60 * 60 * 1000;
-  if (elapsedMs < thresholdMs) return '';
-  return `Welcome back! You were gone ${Math.floor(elapsedMs / (24 * 60 * 60 * 1000))}d — bank a run to reclaim your spot.`;
-}
-
 // ==================== LEADERBOARD ====================
 function renderLeaderboard(data) {
   leaderboardRows = Array.isArray(data) ? data : [];
@@ -2656,8 +2642,6 @@ platform.init().then(() => {
   if (platform.isEmbedded) {
     console.log(`[roach] Running as ${platform.type} miniapp`);
   }
-  const returnPrompt = getReturnPromptMessage();
-  if (returnPrompt) log(returnPrompt);
   connect();
 }).catch(() => {
   // Platform detection failed — connect standalone
