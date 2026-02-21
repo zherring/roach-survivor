@@ -394,12 +394,12 @@ export class GameServer {
         }
 
         let remaining = cost;
-        const usedFromBank = Math.min(player.bankedBalance, remaining);
-        player.bankedBalance -= usedFromBank;
-        remaining -= usedFromBank;
         const usedFromCash = Math.min(player.roach.balance, remaining);
         player.roach.balance -= usedFromCash;
         remaining -= usedFromCash;
+        const usedFromBank = Math.min(player.bankedBalance, remaining);
+        player.bankedBalance -= usedFromBank;
+        remaining -= usedFromBank;
 
         player.upgrades[upgradeKey] = currentLevel + 1;
         player.roach.upgrades = player.upgrades;
