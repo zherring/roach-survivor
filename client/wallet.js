@@ -81,18 +81,10 @@ export async function connectWallet() {
     throw new Error('No wallet found. Install MetaMask/Coinbase or open inside Farcaster.');
   }
 
-  // #region agent log
-  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:connectWallet',message:'EIP1193 provider type',data:{platformType:platform.type,providerType:typeof eip1193,hasRequest:typeof eip1193.request},timestamp:Date.now(),hypothesisId:'H1',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
-
   const provider = new lib.BrowserProvider(eip1193);
   await provider.send('eth_requestAccounts', []);
 
   const network = await provider.getNetwork();
-
-  // #region agent log
-  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:connectWallet:network',message:'Network after connect',data:{chainId:Number(network.chainId),networkName:network.name,expectedChainId:BASE_CHAIN_ID},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
 
   if (Number(network.chainId) !== BASE_CHAIN_ID) {
     try {
@@ -153,25 +145,14 @@ export async function sendUSDCPayment(recipientAddress, amountUSDC, walletContex
 
   const senderAddress = wallet.address || (await signer.getAddress()).toLowerCase();
 
-  // #region agent log
-  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:preBalance',message:'About to call balanceOf via public RPC',data:{senderAddress,usdcContract:USDC_CONTRACT_ADDRESS,platformType:platform.type},timestamp:Date.now(),hypothesisId:'H1-fix',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
-
   const readProvider = new lib.JsonRpcProvider('https://mainnet.base.org', BASE_CHAIN_ID);
   const readOnlyUsdc = new lib.Contract(USDC_CONTRACT_ADDRESS, USDC_ABI, readProvider);
   let balance;
   try {
     balance = await readOnlyUsdc.balanceOf(senderAddress);
   } catch (balErr) {
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:balanceError',message:'balanceOf FAILED even with public RPC',data:{error:balErr?.message,code:balErr?.code},timestamp:Date.now(),hypothesisId:'H1-fix',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
     throw balErr;
   }
-
-  // #region agent log
-  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:balanceOk',message:'balanceOf succeeded',data:{balance:balance?.toString(),senderAddress},timestamp:Date.now(),hypothesisId:'H1-fix',runId:'post-fix'})}).catch(()=>{});
-  // #endregion
 
   if (balance < amountUnits) {
     throw new Error('Not enough USDC balance for this payment.');
@@ -191,14 +172,7 @@ export async function sendUSDCPayment(recipientAddress, amountUSDC, walletContex
       const detail = result?.error?.message || result?.error?.error || 'Farcaster wallet failed to send USDC.';
       throw new Error(detail);
     }
-
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:postSendToken',message:'sendToken succeeded, polling receipt via public RPC',data:{txHash:result.send.transaction},timestamp:Date.now(),hypothesisId:'H5-receipt',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
     const receipt = await waitForReceipt(readProvider, result.send.transaction);
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'5be6bb',location:'wallet.js:sendUSDCPayment:receiptOk',message:'Receipt obtained',data:{txHash:receipt?.hash||result.send.transaction},timestamp:Date.now(),hypothesisId:'H5-receipt',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
     return {
       txHash: receipt?.hash || result.send.transaction,
     };

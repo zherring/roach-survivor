@@ -58,6 +58,9 @@ function readBody(req) {
 function getApiHeaders({ cors = false } = {}) {
   const headers = {
     'Content-Type': 'application/json',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Resource-Policy': 'same-origin',
   };
   if (cors) {
     headers['Access-Control-Allow-Origin'] = '*';
@@ -131,19 +134,6 @@ const server = http.createServer(async (req, res) => {
     res.end();
     return;
   }
-
-  // #region agent log — debug relay endpoint
-  if (urlPath === '/api/debug-log' && req.method === 'POST') {
-    let body = '';
-    req.on('data', c => { body += c; });
-    req.on('end', () => {
-      try { fs.appendFileSync(path.join(__dirname, '..', '.cursor', 'debug-5be6bb.log'), body + '\n'); } catch {}
-      res.writeHead(200, apiHeaders);
-      res.end('ok');
-    });
-    return;
-  }
-  // #endregion
 
   // GET /api/wallet-paid-status — check whether wallet already owns a paid account
   if (urlPath === '/api/wallet-paid-status' && req.method === 'GET') {
@@ -433,6 +423,8 @@ const server = http.createServer(async (req, res) => {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
   };
 
   if (req.method === 'OPTIONS') {
@@ -452,7 +444,10 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({
+  server,
+  maxPayload: 1024 * 8,
+});
 const gameServer = new GameServer();
 let isShuttingDown = false;
 const pendingRemovals = new Set();
@@ -479,6 +474,15 @@ wss.on('connection', (ws) => {
   ws.on('message', async (data) => {
     try {
       if (isShuttingDown) return;
+
+      if (typeof data === 'string' && data.length > 4096) {
+        ws.close(1009, 'Message too large');
+        return;
+      }
+      if (Buffer.isBuffer(data) && data.length > 4096) {
+        ws.close(1009, 'Message too large');
+        return;
+      }
 
       const msg = JSON.parse(data);
 
