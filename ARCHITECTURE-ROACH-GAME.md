@@ -266,18 +266,20 @@ Files: new `client/platform.js`, new `client/.well-known/farcaster.json`, new as
 
 ### M8: Agent API (MoltBots-style) -- NOT STARTED
 **Goal:** AI agents can connect and play alongside humans.
-**Effort:** Half day
+**Effort:** 3-5 days (re-estimated after latency/cost analysis)
 **Blocked by:** Nothing (can be done anytime)
 
-What to build (documented in `AGENT-IMPLEMENTATION.md`):
-1. **Agent SDK** (`agent/sdk.js`) — WebSocket wrapper with `moveTo()`, `stomp()`, `heal()` methods
-2. **Example bot** (`agent/example-bot.js`) — hunts NPCs, flees bots, banks at motel
-3. **SKILL.md** — LLM-readable game description for MoltBots/OpenClaw integration
-4. **Agent identification** — `{ type: 'identify', agent: true }` message, different color tint in UI
+What to build (deep plan documented in `AGENT-IMPLEMENTATION.md`):
+1. **Deterministic runtime first** (`agent/runtime/*`) — low-latency controller loop that runs every tick and executes movement/stomp/heal without waiting on LLM calls.
+2. **Planner abstraction** (`agent/planner/*`) — contract-based strategy layer (`decide(observation) -> intent`) supporting both rule planners and LLM planners.
+3. **Archetype set** — at least 3 rule archetypes + 2 LLM-guided archetypes (farmer, hunter, survival, disruptor, adaptive).
+4. **LLM bridge + budget guardrails** — 500-1000ms planning cadence, strict tool schema, timeout fallback, and token/QPS caps.
+5. **Agent identification** — `{ type: 'identify', agent: true }` message, UI tinting, and separate stats for human vs agent outcomes.
+6. **Telemetry + benchmark harness** — bot-vs-bot match runner and metrics (banked/min, survival, K/D, motel conversion, API cost).
 
-**No server changes needed** for basic agent support — the WebSocket protocol works as-is for any client.
+**Protocol is already compatible**, but production-quality LLM play requires latency-resilient control and cost governance beyond a thin SDK.
 
-Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent flag)
+Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent flag), optional telemetry endpoint(s)
 
 ---
 
