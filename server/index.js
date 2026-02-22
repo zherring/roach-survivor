@@ -41,6 +41,45 @@ const MIME = {
   '.json': 'application/json',
 };
 
+function escapeHtmlAttribute(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function getPublicAppUrl(req) {
+  const explicit = String(process.env.PUBLIC_APP_URL || '').trim();
+  if (explicit) return explicit.replace(/\/$/, '');
+  return getRequestOrigin(req).uri;
+}
+
+function renderIndexHtml(req, template) {
+  const appUrl = getPublicAppUrl(req);
+  const ogImageUrl = `${appUrl}/assets/og-image.png`;
+  const splashImageUrl = `${appUrl}/assets/splash.png`;
+  const embed = {
+    version: '1',
+    imageUrl: ogImageUrl,
+    button: {
+      title: 'Play',
+      action: {
+        type: 'launch_frame',
+        name: 'Roach Survivor',
+        url: appUrl,
+        splashImageUrl,
+        splashBackgroundColor: '#111111',
+      },
+    },
+  };
+
+  return template
+    .replaceAll('__APP_URL__', escapeHtmlAttribute(appUrl))
+    .replaceAll('__OG_IMAGE_URL__', escapeHtmlAttribute(ogImageUrl))
+    .replaceAll('__FC_MINIAPP_EMBED__', escapeHtmlAttribute(JSON.stringify(embed)));
+}
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -402,8 +441,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const isShareableRoute = req.method === 'GET'
+    && (urlPath === '/' || urlPath === '/index.html' || (!path.extname(urlPath) && !urlPath.startsWith('/api/') && !urlPath.startsWith('/.well-known/')));
+
   let filePath;
-  if (urlPath === '/' || urlPath === '/index.html') {
+  if (isShareableRoute) {
     filePath = path.join(ROOT, 'client', 'index.html');
   } else if (urlPath === '/shared/constants.js') {
     filePath = path.join(ROOT, 'shared', 'constants.js');
@@ -447,6 +489,14 @@ const server = http.createServer(async (req, res) => {
       res.end('Not found');
       return;
     }
+
+    if (isShareableRoute) {
+      const html = renderIndexHtml(req, data.toString('utf8'));
+      res.writeHead(200, headers);
+      res.end(html);
+      return;
+    }
+
     res.writeHead(200, headers);
     res.end(data);
   });
