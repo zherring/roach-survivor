@@ -258,7 +258,7 @@ const ENS_LOOKUP_RPC_URL = 'https://ethereum-rpc.publicnode.com';
 let accountWalletAddress = null;
 let accountLinkedIdentity = null;
 let leaderboardRows = [];
-const APP_URL = 'https://roach-survivor-production.up.railway.app/';
+const APP_URL = document.querySelector('meta[name="app-url"]')?.content || window.location.origin;
 const CHALLENGE_PARAM = 'challenge';
 const ensNameCache = new Map(); // lowercased address -> ENS name (or '' if none)
 const ensPending = new Set();
