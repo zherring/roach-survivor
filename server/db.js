@@ -399,6 +399,32 @@ const db = {
     return rows;
   },
 
+  async getWeeklyAirdropCandidates() {
+    const { rows } = await pool.query(
+      `SELECT id, name, wallet_address, banked_balance
+       FROM players
+       WHERE paid_account = TRUE
+         AND wallet_address IS NOT NULL
+         AND trim(wallet_address) <> ''
+         AND banked_balance > 0
+       ORDER BY banked_balance DESC`
+    );
+    return rows;
+  },
+
+  async resetBankedBalances(playerIds) {
+    if (!Array.isArray(playerIds) || playerIds.length === 0) return 0;
+    const now = Date.now();
+    const result = await pool.query(
+      `UPDATE players
+       SET banked_balance = 0,
+           last_seen = $1
+       WHERE id = ANY($2::text[])`,
+      [now, playerIds]
+    );
+    return result.rowCount;
+  },
+
   async close() {
     if (pool) await pool.end();
   },

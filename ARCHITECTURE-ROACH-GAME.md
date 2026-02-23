@@ -343,8 +343,41 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 - Deployed directly by the team on Base (not via Clanker)
 - **90% treasury** — held in a 2/3 multisig and streamed over 1 month via Hedgey (manual setup in v1)
 - **10% float** — public liquidity seeded manually with custom LP parameters
-- Manual weekly payouts by operator (query `payment_log` for paid wallets, send $ROACH)
-- Automated payouts deferred to future milestone
+- Weekly payout automation shipped via `scripts/weekly-airdrop.js` (dry-run + `--execute`)
+- Payout execution uses delegated spender flow: ERC-20 `transferFrom(treasury, recipient, amount)`
+- Railway-friendly workflow: run manually for hand test, then schedule a cron worker
+
+#### Weekly $ROACH Airdrop Ops Runbook (Railway)
+
+**Script location**
+- `scripts/weekly-airdrop.js`
+- `npm run weekly-airdrop`
+
+**Modes**
+- Default (dry-run): prints recipients/totals; no token transfers; no DB reset
+- Execute (`--execute`): submits on-chain transfers and resets banked balances only for successful payouts
+
+**Required env vars (execute mode)**
+- `DATABASE_URL`
+- `ROACH_TOKEN_ADDRESS`
+- `AIRDROP_PRIVATE_KEY` (approved spender key)
+- `AIRDROP_TREASURY_ADDRESS` (token holder/source address)
+- Optional: `BASE_RPC_URL`
+
+**Railway setup**
+1. Create a dedicated worker/cron service for payouts.
+2. Command:
+   - Dry run: `npm run weekly-airdrop`
+   - Execute: `npm run weekly-airdrop -- --execute`
+3. Add env vars above to the worker service.
+4. On token contract, ensure treasury approved spender for sufficient allowance.
+5. Schedule weekly cron (example Mondays 00:00 UTC): `0 0 * * 1`
+
+**Hand test before enabling cron**
+1. Run dry-run and verify recipients/totals.
+2. Confirm treasury allowance and token balance.
+3. Run execute once and verify tx hashes + reset summary in logs.
+4. Spot-check DB to confirm only successfully paid accounts were reset.
 
 #### Config / Env Vars
 - `PAYMENT_RECIPIENT_ADDRESS` — Base wallet receiving USDC (required)
