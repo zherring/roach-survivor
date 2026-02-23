@@ -80,6 +80,7 @@ function renderIndexHtml(req, template) {
     .replaceAll('__OG_IMAGE_URL__', escapeHtmlAttribute(ogImageUrl))
     .replaceAll('__FC_MINIAPP_EMBED__', escapeHtmlAttribute(JSON.stringify(embed)));
 }
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -442,7 +443,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   const isShareableRoute = req.method === 'GET'
-    && (urlPath === '/' || urlPath === '/index.html' || (!path.extname(urlPath) && !urlPath.startsWith('/api/') && !urlPath.startsWith('/.well-known/')));
+    && (urlPath === '/' || urlPath === '/index.html');
 
   let filePath;
   if (isShareableRoute) {
