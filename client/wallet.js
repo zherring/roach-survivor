@@ -56,11 +56,62 @@ async function loadEthers() {
   return ethers;
 }
 
+// --- EIP-6963 provider discovery (works with Rainbow, MetaMask, Phantom, etc.) ---
+const eip6963Providers = [];
+let eip6963Listening = false;
+
+function startEIP6963Discovery() {
+  if (eip6963Listening) return;
+  eip6963Listening = true;
+  window.addEventListener('eip6963:announceProvider', (event) => {
+    if (event.detail?.provider) {
+      // Avoid duplicates (same rdns)
+      const rdns = event.detail.info?.rdns;
+      if (!rdns || !eip6963Providers.some(p => p.info?.rdns === rdns)) {
+        eip6963Providers.push(event.detail);
+      }
+    }
+  });
+  // Ask installed wallets to announce themselves
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+}
+
+// Start discovery immediately so providers accumulate before first use
+startEIP6963Discovery();
+
+// Wait briefly for late-injecting wallets (some extensions inject after DOMContentLoaded)
+function waitForBrowserProvider(timeoutMs = 500) {
+  return new Promise((resolve) => {
+    if (eip6963Providers.length > 0 || window.ethereum) {
+      return resolve(eip6963Providers[0]?.provider || window.ethereum);
+    }
+    const onAnnounce = (event) => {
+      if (event.detail?.provider) {
+        cleanup();
+        resolve(event.detail.provider);
+      }
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(window.ethereum || null);
+    }, timeoutMs);
+    function cleanup() {
+      clearTimeout(timer);
+      window.removeEventListener('eip6963:announceProvider', onAnnounce);
+    }
+    window.addEventListener('eip6963:announceProvider', onAnnounce);
+    // Re-request in case we missed the initial announcement
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+  });
+}
+
 async function getEIP1193Provider() {
   const farcasterProvider = await platform.getWalletProvider();
   if (farcasterProvider) return farcasterProvider;
-  if (window.ethereum) return window.ethereum;
-  return null;
+  // Prefer EIP-6963 discovered providers, fall back to window.ethereum
+  if (eip6963Providers.length > 0) return eip6963Providers[0].provider;
+  // Wait briefly for late-injecting extensions
+  return waitForBrowserProvider(500);
 }
 
 function ensureOkResponse(res, body) {
@@ -78,7 +129,7 @@ export async function connectWallet() {
   const eip1193 = await getEIP1193Provider();
 
   if (!eip1193) {
-    throw new Error('No wallet found. Install MetaMask/Coinbase or open inside Farcaster.');
+    throw new Error('No wallet found. Install MetaMask, Rainbow, or Coinbase Wallet, then refresh.');
   }
 
   // #region agent log
