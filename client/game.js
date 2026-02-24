@@ -366,7 +366,7 @@ function getWalletIdentity(walletAddress, fallback = '') {
   }
   const ensName = ensNameCache.get(normalized);
   if (typeof ensName === 'string' && ensName.length > 0) return ensName;
-  return shortAddress(normalized);
+  return fallback || shortAddress(normalized);
 }
 
 function getPassiveIncomePerSecond() {
