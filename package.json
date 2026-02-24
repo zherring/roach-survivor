@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "createdb roach 2>/dev/null; node --watch server/index.js"
+    "dev": "createdb roach 2>/dev/null; node --watch server/index.js",
+    "weekly-airdrop": "node scripts/weekly-airdrop.js"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

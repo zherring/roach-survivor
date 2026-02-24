@@ -221,3 +221,6 @@ This is ~10 lines in `game-server.js`.
 4. Run 5 bots simultaneously — they compete with each other and house bots
 5. Check that bots accumulate balance, get killed, respawn, navigate rooms
 6. (Phase 2) Run LLM-powered agent — watch it make strategic decisions
+
+
+---
