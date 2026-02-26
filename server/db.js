@@ -31,6 +31,7 @@ async function initDB() {
       wall_bounce_level INTEGER DEFAULT 0,
       idle_income_level INTEGER DEFAULT 0,
       shell_armor_level INTEGER DEFAULT 0,
+      boost_capacity_level INTEGER DEFAULT 0,
       platform_type TEXT DEFAULT NULL,
       platform_id TEXT DEFAULT NULL,
       paid_account BOOLEAN DEFAULT FALSE,
@@ -101,6 +102,10 @@ async function initDB() {
     END $$;
     DO $$ BEGIN
       ALTER TABLE players ADD COLUMN payment_tx_hash TEXT DEFAULT NULL;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$;
+    DO $$ BEGIN
+      ALTER TABLE players ADD COLUMN boost_capacity_level INTEGER DEFAULT 0;
     EXCEPTION WHEN duplicate_column THEN NULL;
     END $$;
   `);
@@ -201,13 +206,14 @@ const db = {
     const wallBounce = Number.isFinite(upgrades?.wallBounce) ? upgrades.wallBounce : 0;
     const idleIncome = Number.isFinite(upgrades?.idleIncome) ? upgrades.idleIncome : 0;
     const shellArmor = Number.isFinite(upgrades?.shellArmor) ? upgrades.shellArmor : 0;
+    const boostCapacity = Number.isFinite(upgrades?.boostCapacity) ? upgrades.boostCapacity : 0;
     await pool.query(
       `UPDATE players
        SET boot_size_level = $1, multi_stomp_level = $2, rate_of_fire_level = $3,
            gold_magnet_level = $4, wall_bounce_level = $5, idle_income_level = $6,
-           shell_armor_level = $7, last_seen = $8
-       WHERE id = $9`,
-      [bootSize, multiStomp, rateOfFire, goldMagnet, wallBounce, idleIncome, shellArmor, Date.now(), playerId]
+           shell_armor_level = $7, boost_capacity_level = $8, last_seen = $9
+       WHERE id = $10`,
+      [bootSize, multiStomp, rateOfFire, goldMagnet, wallBounce, idleIncome, shellArmor, boostCapacity, Date.now(), playerId]
     );
   },
 

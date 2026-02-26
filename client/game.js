@@ -8,6 +8,7 @@ import {
   UPGRADE_DEFS, UPGRADE_ORDER, createDefaultUpgrades, sanitizeUpgrades,
   getUpgradeCost, getBootScale, getMultiStompOffsets, getStompCooldownForLevel,
   getGoldAttractionMultiplier, getIdleIncomePerSecond,
+  BOOST_REFILL_MS, BOOST_ACTIVE_WINDOW_MS, BOOST_IMPULSE, getBoostMaxCharges,
 } from '/shared/constants.js';
 import { platform } from './platform.js';
 import {
@@ -129,6 +130,13 @@ let lastAliveReset = Date.now();
 let upgrades = createDefaultUpgrades();
 let stompCooldownMs = getStompCooldownForLevel(0);
 let lastLocalStompAt = 0;
+let boostCharges = 1;
+let boostMaxCharges = 1;
+let boostRefillMs = BOOST_REFILL_MS;
+let boostRefillProgressMs = 0;
+let boostActiveUntil = 0;
+let autopilotEnabled = false;
+let pendingBoostSend = false;
 let isPaid = false;
 let paymentQuote = null;
 let paymentInFlight = false;
@@ -221,6 +229,10 @@ const accountUpgradesEl = document.getElementById('account-upgrades');
 const shopOvBalanceEl = document.getElementById('shop-ov-balance');
 const shopOvBankedEl = document.getElementById('shop-ov-banked');
 const shopOvHpEl = document.getElementById('shop-ov-hp');
+const boostChargesEl = document.getElementById('boost-charges');
+const boostRefillEl = document.getElementById('boost-refill');
+const autopilotStatusEl = document.getElementById('autopilot-status');
+const mobileBoostEl = document.getElementById('m-boost');
 const shopPanelEl = document.getElementById('shop-panel');
 const openShopBtn = document.getElementById('open-shop-btn');
 const mobileOpenShopBtn = document.getElementById('mobile-open-shop-btn');
@@ -245,6 +257,7 @@ const SHOP_PROSPECTOR_LINES = {
   wallBounce: "Turns walls into springboards. Smack the edge and bounce back with force.",
   idleIncome: "Passive drip of money every second. Good for lazy roaches who still want rich pockets.",
   shellArmor: "Thickens your shell. Die less broke by keeping more of what you earned.",
+  boostCapacity: "Gives ya extra dash charges. Starts with one, buy up to three total.",
 };
 const SHOP_PROSPECTOR_TYPE_MS = 500;
 let shopProspectorTalkTimer = null;
@@ -275,6 +288,77 @@ function setStompCooldownMs(rawCooldown) {
   const parsed = Number(rawCooldown);
   if (!Number.isFinite(parsed)) return;
   stompCooldownMs = Math.max(30, parsed);
+}
+
+function applyBoostState(rawBoost = null) {
+  if (rawBoost && typeof rawBoost === 'object') {
+    if (Number.isFinite(rawBoost.maxCharges)) boostMaxCharges = Math.max(1, rawBoost.maxCharges);
+    if (Number.isFinite(rawBoost.charges)) boostCharges = Math.max(0, Math.min(boostMaxCharges, rawBoost.charges));
+    if (Number.isFinite(rawBoost.refillMs)) boostRefillMs = Math.max(500, rawBoost.refillMs);
+    if (Number.isFinite(rawBoost.refillProgressMs)) {
+      boostRefillProgressMs = Math.max(0, rawBoost.refillProgressMs);
+    } else if (boostCharges >= boostMaxCharges) {
+      boostRefillProgressMs = 0;
+    }
+  } else {
+    boostMaxCharges = getBoostMaxCharges(upgrades.boostCapacity || 0);
+    boostCharges = Math.min(boostCharges, boostMaxCharges);
+  }
+}
+
+function updateBoostHud() {
+  if (boostChargesEl) boostChargesEl.textContent = `${boostCharges}/${boostMaxCharges}`;
+  if (mobileBoostEl) mobileBoostEl.textContent = `${boostCharges}/${boostMaxCharges}`;
+  if (boostRefillEl) {
+    if (boostCharges >= boostMaxCharges) {
+      boostRefillEl.textContent = 'Ready';
+    } else {
+      boostRefillEl.textContent = `${Math.max(0, (boostRefillProgressMs / 1000)).toFixed(1)}s`;
+    }
+  }
+}
+
+function setAutopilotEnabled(enabled, source = 'local') {
+  autopilotEnabled = !!enabled;
+  if (autopilotStatusEl) {
+    autopilotStatusEl.textContent = autopilotEnabled ? 'ON' : 'OFF';
+    autopilotStatusEl.style.color = autopilotEnabled ? '#0f0' : '#999';
+  }
+  if (source === 'local') {
+    log(`<span style="color:${autopilotEnabled ? '#8f8' : '#888'}">Autopilot ${autopilotEnabled ? 'engaged' : 'disabled'}.</span>`);
+  }
+}
+
+function tryConsumeBoost() {
+  if (boostCharges <= 0) return false;
+  boostCharges -= 1;
+  if (boostCharges < boostMaxCharges && boostRefillProgressMs <= 0) {
+    boostRefillProgressMs = boostRefillMs;
+  }
+  boostActiveUntil = Date.now() + BOOST_ACTIVE_WINDOW_MS;
+  const mag = Math.sqrt(predictedVx * predictedVx + predictedVy * predictedVy);
+  if (mag > 0.001) {
+    const boostedSpeed = getSpeed(balance) + BOOST_IMPULSE;
+    predictedVx = (predictedVx / mag) * boostedSpeed;
+    predictedVy = (predictedVy / mag) * boostedSpeed;
+  }
+  pendingBoostSend = true;
+  updateBoostHud();
+  return true;
+}
+
+function updateLocalBoost(dtMs) {
+  if (boostCharges >= boostMaxCharges) {
+    boostRefillProgressMs = 0;
+    return;
+  }
+  boostRefillProgressMs = Math.max(0, boostRefillProgressMs - dtMs);
+  if (boostRefillProgressMs === 0) {
+    boostCharges = Math.min(boostMaxCharges, boostCharges + 1);
+    if (boostCharges < boostMaxCharges) {
+      boostRefillProgressMs = boostRefillMs;
+    }
+  }
 }
 
 function formatPriceLabel(value) {
@@ -958,6 +1042,8 @@ function handleMessage(msg) {
       if (Number.isFinite(msg.stompCooldown)) {
         setStompCooldownMs(msg.stompCooldown);
       }
+      applyBoostState(msg.boost);
+      updateBoostHud();
       updateAccountSummary();
       renderUpgradeShop();
       if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
@@ -1007,6 +1093,8 @@ function handleMessage(msg) {
       if (Number.isFinite(msg.stompCooldown)) {
         setStompCooldownMs(msg.stompCooldown);
       }
+      applyBoostState(msg.boost);
+      updateBoostHud();
       renderUpgradeShop();
       updateAccountSummary();
       showUpgradePurchaseEffect(msg.upgrade, Number(msg.cost), msg.level);
@@ -1049,6 +1137,12 @@ function handleTick(msg) {
     if (Number.isFinite(msg.you.stompCooldown)) {
       setStompCooldownMs(msg.you.stompCooldown);
     }
+    if (Number.isFinite(msg.you.boostCharges)) boostCharges = Math.max(0, msg.you.boostCharges);
+    if (Number.isFinite(msg.you.boostMaxCharges)) boostMaxCharges = Math.max(1, msg.you.boostMaxCharges);
+    if (Number.isFinite(msg.you.boostRefillMs)) boostRefillMs = Math.max(500, msg.you.boostRefillMs);
+    if (Number.isFinite(msg.you.boostRefillProgressMs)) boostRefillProgressMs = Math.max(0, msg.you.boostRefillProgressMs);
+    if (typeof msg.you.autopilotEnabled === 'boolean') setAutopilotEnabled(msg.you.autopilotEnabled, 'server');
+    updateBoostHud();
     if (Number.isFinite(msg.you.healCount)) {
       if (msg.you.healCount > lastHealCount) {
         showHealEffect();
@@ -1319,12 +1413,23 @@ function predictFrame() {
   if (keys.a) predictedVx -= force;
   if (keys.d) predictedVx += force;
 
+  if (autopilotEnabled && motelData && motelData.active && motelData.room === currentRoom) {
+    const dx = motelData.x - predictedX;
+    const dy = motelData.y - predictedY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 2) {
+      predictedVx += (dx / dist) * 0.65;
+      predictedVy += (dy / dist) * 0.65;
+    }
+  }
+
   // Drunk steering — applied HERE on client so it feels immediate
   predictedVx += (Math.random() - 0.5) * 0.3;
   predictedVy += (Math.random() - 0.5) * 0.3;
 
   // Clamp speed
-  const speed = getSpeed(balance);
+  const speedBoosted = Date.now() < boostActiveUntil ? BOOST_IMPULSE : 0;
+  const speed = getSpeed(balance) + speedBoosted;
   const mag = Math.sqrt(predictedVx * predictedVx + predictedVy * predictedVy);
   if (mag > speed) {
     predictedVx = (predictedVx / mag) * speed;
@@ -2389,6 +2494,12 @@ document.addEventListener('keydown', (e) => {
   }
 
   if (k in keys) keys[k] = true;
+  if (k === 'b') {
+    setAutopilotEnabled(!autopilotEnabled, 'local');
+  }
+  if (e.key === 'Shift') {
+    tryConsumeBoost();
+  }
   if (e.key === ' ') {
     e.preventDefault();
     send({ type: 'heal' });
@@ -2503,7 +2614,7 @@ if (isTouchDevice) {
   joystickZone.style.display = 'block';
   const controlsEl = document.getElementById('controls');
   if (controlsEl) {
-    controlsEl.innerHTML = '<b>Tap</b> to stomp | <b>Joystick</b> to move | Enter <span style="color:#f0c040">ROACH MOTEL</span> to bank!';
+    controlsEl.innerHTML = '<b>Tap</b> stomp | <b>Joystick</b> move | <b>B</b> autopilot | <b>Shift</b> boost';
   }
 }
 
@@ -2614,7 +2725,7 @@ function gameLoop() {
   const now = Date.now();
   const keysChanged = keys.w !== lastKeys.w || keys.a !== lastKeys.a || keys.s !== lastKeys.s || keys.d !== lastKeys.d;
 
-  if (connected && myId && (keysChanged || now - lastInputSend > 50)) {
+  if (connected && myId && (keysChanged || now - lastInputSend > 50 || pendingBoostSend)) {
     inputSeq++;
     // Send position + velocity so server can accept client movement directly
     send({
@@ -2626,12 +2737,17 @@ function gameLoop() {
       vy: predictedVy,
       cursorX: mouseInContainer ? mouseX : -1,
       cursorY: mouseInContainer ? mouseY : -1,
+      boost: pendingBoostSend,
+      autopilot: autopilotEnabled,
     });
+    pendingBoostSend = false;
     lastKeys = { ...keys };
     lastInputSend = now;
   }
 
   // Predict
+  updateLocalBoost(16.7);
+  updateBoostHud();
   predictFrame();
   updateBalanceHud(now);
 
@@ -2643,6 +2759,8 @@ function gameLoop() {
 
 // ==================== INIT ====================
 applyUpgradeState(upgrades);
+updateBoostHud();
+setAutopilotEnabled(false, 'server');
 applyPaidUI();
 renderUpgradeShop();
 setStoreTab(currentStoreTab, true);
