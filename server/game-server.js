@@ -2,7 +2,7 @@ import {
   TICK_RATE, TICKS_PER_SEC, GRID_SIZE, CONTAINER_WIDTH, CONTAINER_HEIGHT,
   ROACH_WIDTH, ROACH_HEIGHT, HEAL_COST, MAX_HP, BASE_HP, HP_DECAY_RATE,
   UPGRADE_DEFS, getUpgradeCost, sanitizeUpgrades, createDefaultUpgrades,
-  getStompCooldownForLevel, getBootScale,
+  getStompCooldownForLevel, getBootScale, BOOST_REFILL_MS,
 } from '../shared/constants.js';
 import { Room } from './room.js';
 import { Roach } from './roach.js';
@@ -55,6 +55,8 @@ function sanitizeInputMessage(msg) {
     seq: seq === null ? null : clamp(seq, 0, MAX_INPUT_SEQUENCE),
     cursorX: hasCursor ? clamp(cursorX, 0, CONTAINER_WIDTH) : INVALID_CURSOR,
     cursorY: hasCursor ? clamp(cursorY, 0, CONTAINER_HEIGHT) : INVALID_CURSOR,
+    boost: msg.boost === true,
+    autopilot: msg.autopilot === true,
   };
 }
 
@@ -172,6 +174,7 @@ export class GameServer {
           wallBounce: existing.wall_bounce_level,
           idleIncome: existing.idle_income_level,
           shellArmor: existing.shell_armor_level,
+          boostCapacity: existing.boost_capacity_level,
         });
         session = await db.getSession(token);
         roomKey = session ? session.room : '1,1';
@@ -240,8 +243,11 @@ export class GameServer {
       cursorY: INVALID_CURSOR,
       msgCount: 0,
       msgWindowStart: Date.now(),
+      autopilotEnabled: false,
     };
     roach.upgrades = player.upgrades;
+    roach.setBoostCapacity(player.upgrades.boostCapacity || 0);
+    roach.boostCharges = roach.boostMaxCharges;
     this.players.set(roach.id, player);
 
     // Send welcome with full snapshot
@@ -258,6 +264,12 @@ export class GameServer {
       isPaid,
       upgrades: { ...upgrades },
       stompCooldown: getStompCooldownForLevel(upgrades.rateOfFire),
+      boost: {
+        charges: roach.boostCharges,
+        maxCharges: roach.boostMaxCharges,
+        refillMs: BOOST_REFILL_MS,
+        refillProgressMs: roach.boostRefillProgressMs,
+      },
       linkedPlatform: linkedPlatform || undefined,
       leaderboard: this.leaderboardCache,
       account: {
@@ -318,6 +330,11 @@ export class GameServer {
         player.roach.pendingPos = { x: input.x, y: input.y, vx: input.vx, vy: input.vy };
         if (input.seq !== null && input.seq >= player.roach.lastInputSeq) {
           player.roach.lastInputSeq = input.seq;
+        }
+
+        player.autopilotEnabled = !!input.autopilot;
+        if (input.boost) {
+          player.roach.consumeBoost(now);
         }
 
         player.cursorX = input.cursorX;
@@ -403,6 +420,10 @@ export class GameServer {
 
         player.upgrades[upgradeKey] = currentLevel + 1;
         player.roach.upgrades = player.upgrades;
+        if (upgradeKey === 'boostCapacity') {
+          player.roach.setBoostCapacity(player.upgrades.boostCapacity || 0);
+          player.roach.boostCharges = Math.min(player.roach.boostCharges + 1, player.roach.boostMaxCharges);
+        }
         if (player.token) {
           await db.updateUpgrades(player.token, player.upgrades);
           if (usedFromBank > 0) {
@@ -418,6 +439,12 @@ export class GameServer {
           usedFromCash,
           upgrades: { ...player.upgrades },
           stompCooldown: getStompCooldownForLevel(player.upgrades.rateOfFire),
+          boost: {
+            charges: player.roach.boostCharges,
+            maxCharges: player.roach.boostMaxCharges,
+            refillMs: BOOST_REFILL_MS,
+            refillProgressMs: player.roach.boostRefillProgressMs,
+          },
           balance: player.roach.balance,
           banked: player.bankedBalance,
         });
@@ -486,6 +513,28 @@ export class GameServer {
           db.incrementKills(killer.token).catch(err => console.error('DB kill error:', err.message));
         }
       }
+    }
+
+    const dtMs = TICK_RATE;
+    for (const [, player] of this.players) {
+      if (player.autopilotEnabled && this.motel.active && player.room === this.motel.room) {
+        const roach = player.roach;
+        const tx = this.motel.x;
+        const ty = this.motel.y;
+        const dx = tx - roach.x;
+        const dy = ty - roach.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 1) {
+          const speed = roach.getSpeed();
+          roach.vx = (dx / dist) * speed;
+          roach.vy = (dy / dist) * speed;
+          roach.x += roach.vx;
+          roach.y += roach.vy;
+          roach.x = Math.max(-10, Math.min(CONTAINER_WIDTH + 10, roach.x));
+          roach.y = Math.max(-10, Math.min(CONTAINER_HEIGHT + 10, roach.y));
+        }
+      }
+      player.roach.updateBoost(dtMs);
     }
 
     // HP decay: player HP above BASE_HP decays at HP_DECAY_RATE per second
@@ -606,6 +655,11 @@ export class GameServer {
           healCount: player.roach.healCount,
           upgrades: { ...player.upgrades },
           stompCooldown: getStompCooldownForLevel(player.upgrades.rateOfFire),
+          boostCharges: player.roach.boostCharges,
+          boostMaxCharges: player.roach.boostMaxCharges,
+          boostRefillMs: BOOST_REFILL_MS,
+          boostRefillProgressMs: Math.max(0, Math.round(player.roach.boostRefillProgressMs)),
+          autopilotEnabled: player.autopilotEnabled,
           walletAddress: player.walletAddress,
           linkedIdentity: player.linkedIdentity,
           totalKills: player.totalKills || 0,

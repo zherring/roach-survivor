@@ -2,6 +2,7 @@ import {
   CONTAINER_WIDTH, CONTAINER_HEIGHT, ROACH_WIDTH, ROACH_HEIGHT,
   PLAYER_BASE_SPEED, NPC_BASE_SPEED, WEALTH_SPEED_PENALTY_MAX,
   WEALTH_SPEED_PENALTY_RATE, MIN_SPEED, MAX_HP, BASE_HP, DEATH_PENALTY,
+  BOOST_REFILL_MS, BOOST_ACTIVE_WINDOW_MS, BOOST_IMPULSE, getBoostMaxCharges,
 } from '../shared/constants.js';
 
 let nextId = 0;
@@ -22,6 +23,10 @@ export class Roach {
     this.healCount = 0;
     // Pending client state (position + velocity reported by client)
     this.pendingPos = null; // { x, y, vx, vy }
+    this.boostCharges = 1;
+    this.boostMaxCharges = 1;
+    this.boostRefillProgressMs = 0;
+    this.boostUntil = 0;
   }
 
   getSpeed() {
@@ -70,6 +75,16 @@ export class Roach {
     }
     this.vx = Number.isFinite(p.vx) ? p.vx : 0;
     this.vy = Number.isFinite(p.vy) ? p.vy : 0;
+
+    const now = Date.now();
+    if (this.boostUntil > now) {
+      const magNow = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+      if (magNow > 0) {
+        const boostedSpeed = this.getSpeed() + BOOST_IMPULSE;
+        this.vx = (this.vx / magNow) * boostedSpeed;
+        this.vy = (this.vy / magNow) * boostedSpeed;
+      }
+    }
 
     this.x = Math.max(-15, Math.min(CONTAINER_WIDTH + 15, this.x));
     this.y = Math.max(-15, Math.min(CONTAINER_HEIGHT + 15, this.y));
@@ -167,6 +182,46 @@ export class Roach {
     this.vy += (dy / dist) * 3;
   }
 
+  setBoostCapacity(level) {
+    const maxCharges = getBoostMaxCharges(level);
+    this.boostMaxCharges = maxCharges;
+    if (this.boostCharges > maxCharges) {
+      this.boostCharges = maxCharges;
+      if (this.boostCharges >= this.boostMaxCharges) this.boostRefillProgressMs = 0;
+    }
+  }
+
+  consumeBoost(now = Date.now()) {
+    if (!this.isPlayer) return false;
+    if (this.boostCharges <= 0) return false;
+    this.boostCharges -= 1;
+    this.boostUntil = now + BOOST_ACTIVE_WINDOW_MS;
+    if (this.boostCharges < this.boostMaxCharges && this.boostRefillProgressMs <= 0) {
+      this.boostRefillProgressMs = BOOST_REFILL_MS;
+    }
+    return true;
+  }
+
+  updateBoost(dtMs) {
+    if (!this.isPlayer) return false;
+    let changed = false;
+    if (this.boostCharges >= this.boostMaxCharges) {
+      this.boostRefillProgressMs = 0;
+      return changed;
+    }
+    this.boostRefillProgressMs -= dtMs;
+    while (this.boostRefillProgressMs <= 0 && this.boostCharges < this.boostMaxCharges) {
+      this.boostCharges += 1;
+      changed = true;
+      if (this.boostCharges < this.boostMaxCharges) {
+        this.boostRefillProgressMs += BOOST_REFILL_MS;
+      } else {
+        this.boostRefillProgressMs = 0;
+      }
+    }
+    return changed;
+  }
+
   serialize() {
     return {
       id: this.id,
@@ -180,6 +235,9 @@ export class Roach {
       isPlayer: this.isPlayer,
       name: this.name,
       lastInputSeq: this.lastInputSeq,
+      boostCharges: this.boostCharges,
+      boostMaxCharges: this.boostMaxCharges,
+      boostRefillProgressMs: Math.max(0, Math.round(this.boostRefillProgressMs)),
     };
   }
 }

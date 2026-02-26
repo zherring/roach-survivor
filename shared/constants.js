@@ -41,6 +41,9 @@ export const BOTS_PER_WEALTH = 50; // 1 bot per 50 $ROACH of room wealth
 export const MAX_BOTS_PER_ROOM = 8;
 export const STOMP_AOE_RADIUS = 69; // AoE splash damage radius
 export const STOMP_AOE_DAMAGE = 1; // 1 HP splash to nearby roaches
+export const BOOST_REFILL_MS = 3000;
+export const BOOST_ACTIVE_WINDOW_MS = 220;
+export const BOOST_IMPULSE = 3.6;
 
 export const UPGRADE_DEFS = Object.freeze({
   bootSize: Object.freeze({
@@ -85,6 +88,12 @@ export const UPGRADE_DEFS = Object.freeze({
     baseCost: 12,
     costMultiplier: 1.12,
   }),
+  boostCapacity: Object.freeze({
+    label: 'Boost Capacity',
+    maxLevel: 2,
+    baseCost: 35,
+    costMultiplier: 2,
+  }),
 });
 
 export const UPGRADE_ORDER = Object.freeze([
@@ -95,6 +104,7 @@ export const UPGRADE_ORDER = Object.freeze([
   'wallBounce',
   'idleIncome',
   'shellArmor',
+  'boostCapacity',
 ]);
 
 export function createDefaultUpgrades() {
@@ -106,6 +116,7 @@ export function createDefaultUpgrades() {
     wallBounce: 0,
     idleIncome: 0,
     shellArmor: 0,
+    boostCapacity: 0,
   };
 }
 
@@ -210,6 +221,11 @@ export function getShellArmorDeathPenalty(level) {
 export function getWallBounceStrength(level) {
   const clamped = clampUpgradeLevel('wallBounce', level);
   return 0.5 + Math.min(2, clamped * 0.04);
+}
+
+export function getBoostMaxCharges(level) {
+  const clamped = clampUpgradeLevel('boostCapacity', level);
+  return 1 + clamped;
 }
 
 // ==================== PAYMENT / FREEMIUM ====================
