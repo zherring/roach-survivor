@@ -150,6 +150,12 @@ async function initDB() {
 }
 
 const db = {
+
+  async query(text, params = []) {
+    const result = await pool.query(text, params);
+    return result;
+  },
+
   async createPlayer(name) {
     const id = randomUUID();
     const now = Date.now();
