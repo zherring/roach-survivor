@@ -85,6 +85,12 @@ export const UPGRADE_DEFS = Object.freeze({
     baseCost: 12,
     costMultiplier: 1.12,
   }),
+  autopilot: Object.freeze({
+    label: 'Autopilot',
+    maxLevel: 1,
+    baseCost: 5000,
+    costMultiplier: 1,
+  }),
 });
 
 export const UPGRADE_ORDER = Object.freeze([
@@ -95,6 +101,7 @@ export const UPGRADE_ORDER = Object.freeze([
   'wallBounce',
   'idleIncome',
   'shellArmor',
+  'autopilot',
 ]);
 
 export function createDefaultUpgrades() {
@@ -106,6 +113,7 @@ export function createDefaultUpgrades() {
     wallBounce: 0,
     idleIncome: 0,
     shellArmor: 0,
+    autopilot: 0,
   };
 }
 

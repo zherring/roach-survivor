@@ -58,7 +58,7 @@ smart-contracts/    # Foundry project for $ROACH ERC20 on Base
 
 ### Database Schema
 
-**Players table**: id, name, banked_balance, total_kills, upgrade levels (7 types), platform identity, timestamps
+**Players table**: id, name, banked_balance, total_kills, upgrade levels (8 types), platform identity, timestamps
 
 **Sessions table**: player_id, room, position, balance, hp, updated_at (5-min expiry for reconnection)
 
@@ -74,7 +74,7 @@ WebSocket protocol with flat message types:
 - **Economy**: Points-based. Passive income + kill rewards. Banking at Roach Motel (2s channel time)
 - **Combat**: Boot stomp with AoE splash damage, multi-hit zones, wealth-weighted bot targeting
 - **Movement**: Client-authoritative with drunk steering, wealth-based speed penalty
-- **Upgrades**: 7 persistent upgrade types (bootSize, multiStomp, rateOfFire, goldMagnet, wallBounce, idleIncome, shellArmor)
+- **Upgrades**: 8 persistent upgrade types (bootSize, multiStomp, rateOfFire, goldMagnet, wallBounce, idleIncome, shellArmor, autopilot)
 - **Rooms**: 3x3 grid, edge-crossing transitions, per-room NPC/bot simulation
 - **Death**: 90% balance loss (reduced by shellArmor), instant respawn
 
