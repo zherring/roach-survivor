@@ -1269,6 +1269,78 @@
     }
     #lb-payout { color: #f0c040; }
     #lb-reset { color: #f44; }
+    .lb-search-panel {
+      margin: 10px 0 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #lb-search-label {
+      color: #b6f258;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    #lb-search-input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #444;
+      background: #090909;
+      color: #eee;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px 9px;
+      outline: none;
+    }
+    #lb-search-input:focus {
+      border-color: #b6f258;
+      box-shadow: 0 0 0 1px rgba(182, 242, 88, 0.2);
+    }
+    #lb-search-status {
+      color: #777;
+      font-size: 11px;
+      min-height: 14px;
+    }
+    #lb-search-status.error { color: #f77; }
+    #lb-search-results {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .lb-search-item {
+      border: 1px solid #2a2a2a;
+      background: #0c0c0c;
+      padding: 8px 9px;
+    }
+    .lb-search-item-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      margin-bottom: 4px;
+    }
+    .lb-search-name {
+      color: #f0c040;
+      font-size: 13px;
+      word-break: break-word;
+    }
+    .lb-search-state {
+      color: #b6f258;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+    .lb-search-meta {
+      color: #999;
+      font-size: 11px;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .lb-search-meta strong {
+      color: #ccc;
+      font-weight: normal;
+    }
     #leaderboard-table {
       width: 100%;
       border-collapse: collapse;
@@ -1912,6 +1984,12 @@
         <button id="lb-share-btn" class="lb-action-btn">Share on Farcaster</button>
         <button id="lb-invite-btn" class="lb-action-btn">Copy challenge link</button>
         <span id="lb-action-status" class="lb-action-status"></span>
+      </div>
+      <div class="lb-search-panel">
+        <label id="lb-search-label" for="lb-search-input">Find saved player</label>
+        <input id="lb-search-input" type="text" placeholder="Search name, wallet, or player id" autocomplete="off" spellcheck="false">
+        <div id="lb-search-status">Search paid players, linked wallets, or player ids.</div>
+        <div id="lb-search-results" class="hidden"></div>
       </div>
       <table id="leaderboard-table">
         <thead><tr><th>#</th><th>Player</th><th>$ROACH</th></tr></thead>

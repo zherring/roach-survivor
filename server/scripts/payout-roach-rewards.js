@@ -29,6 +29,8 @@ const MAX_PLAYERS = Number.isFinite(Number(process.env.ROACH_PAYOUT_MAX_PLAYERS)
   ? Number(process.env.ROACH_PAYOUT_MAX_PLAYERS)
   : Infinity;
 const CONFIRMATIONS = Math.max(1, Number(process.env.ROACH_PAYOUT_CONFIRMATIONS || 1));
+const MAX_RETRIES = Math.max(0, Number(process.env.ROACH_PAYOUT_RETRY_ATTEMPTS || 2));
+const RETRY_DELAY_MS = Math.max(0, Number(process.env.ROACH_PAYOUT_RETRY_DELAY_MS || 1500));
 
 function assertConfig() {
   if (!TOKEN_ADDRESS || !ethers.isAddress(TOKEN_ADDRESS)) {
@@ -65,21 +67,70 @@ async function loadEligiblePlayers(limit) {
   return rows.filter((player) => ethers.isAddress(player.wallet_address));
 }
 
-function getSpenderAddress(signer) {
-  return normalizeAddress(signer?.address || SPENDER_ADDRESS);
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function payoutPlayer({ player, token, decimals, sourceAddress, spenderAddress }) {
+async function getSpenderAddress(signer) {
+  if (!signer) return SPENDER_ADDRESS;
+  try {
+    return normalizeAddress(await signer.getAddress());
+  } catch {
+    return normalizeAddress(signer?.address || SPENDER_ADDRESS);
+  }
+}
+
+function isRetryableNonceError(err) {
+  const code = String(err?.code || '');
+  const message = String(err?.message || '').toLowerCase();
+  return code === 'NONCE_EXPIRED'
+    || code === 'REPLACEMENT_UNDERPRICED'
+    || message.includes('nonce too low')
+    || message.includes('nonce has already been used')
+    || message.includes('replacement transaction underpriced');
+}
+
+async function sendPayoutTransaction({ token, player, chainAmount, sourceAddress, spenderAddress }) {
+  return sourceAddress === spenderAddress
+    ? token.transfer(player.wallet_address, chainAmount)
+    : token.transferFrom(sourceAddress, player.wallet_address, chainAmount);
+}
+
+async function payoutPlayer({ player, token, decimals, sourceAddress, spenderAddress, signer }) {
   const amount = Number(player.banked_balance || 0);
   const chainAmount = amountToChainUnits(amount, decimals);
   if (chainAmount <= 0n) {
     return { status: 'skipped', reason: 'amount rounds to 0 on-chain' };
   }
 
-  const tx = sourceAddress === spenderAddress
-    ? await token.transfer(player.wallet_address, chainAmount)
-    : await token.transferFrom(sourceAddress, player.wallet_address, chainAmount);
-  const receipt = await tx.wait(CONFIRMATIONS);
+  let receipt;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const tx = await sendPayoutTransaction({
+        token,
+        player,
+        chainAmount,
+        sourceAddress,
+        spenderAddress,
+      });
+      receipt = await tx.wait(CONFIRMATIONS);
+      break;
+    } catch (err) {
+      const canRetry = attempt < MAX_RETRIES && isRetryableNonceError(err);
+      if (!canRetry) throw err;
+
+      if (signer && typeof signer.reset === 'function') {
+        signer.reset();
+      }
+      const nextDelay = RETRY_DELAY_MS * (attempt + 1);
+      console.warn(
+        `Retrying payout for ${player.name} (${player.id}) after nonce error [attempt ${attempt + 1}/${MAX_RETRIES}]: ${err.message}`
+      );
+      if (nextDelay > 0) {
+        await sleep(nextDelay);
+      }
+    }
+  }
 
   await db.query(
     `UPDATE players
@@ -102,11 +153,14 @@ async function main() {
   await initDB();
 
   const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
-  const signer = DRY_RUN
+  const baseSigner = DRY_RUN
     ? null
     : new ethers.Wallet(PRIVATE_KEY, provider);
+  const signer = baseSigner
+    ? new ethers.NonceManager(baseSigner)
+    : null;
   const token = new ethers.Contract(TOKEN_ADDRESS, ERC20_ABI, signer || provider);
-  const spenderAddress = getSpenderAddress(signer);
+  const spenderAddress = await getSpenderAddress(signer);
 
   let decimals = Number(process.env.ROACH_TOKEN_DECIMALS || NaN);
   if (!Number.isFinite(decimals)) {
@@ -129,6 +183,9 @@ async function main() {
     console.log(`Payout signer/spender: ${spenderAddress}`);
   } else if (DRY_RUN) {
     console.log('Payout signer/spender unavailable in dry run; skipping allowance validation.');
+  }
+  if (signer) {
+    console.log(`Starting signer nonce (pending): ${await signer.getNonce('pending')}`);
   }
   if (ONLY_PAID) {
     console.log('Filtering to paid_account = true players only.');
@@ -180,6 +237,7 @@ async function main() {
         decimals,
         sourceAddress: SOURCE_ADDRESS,
         spenderAddress,
+        signer,
       });
       if (result.status === 'paid') {
         console.log(`Paid ${display} to ${player.name} (${player.id}) in tx ${result.txHash}`);
