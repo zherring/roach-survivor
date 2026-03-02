@@ -142,7 +142,8 @@ function isSensitiveApiPath(pathname) {
   return pathname === '/api/siwe/challenge'
     || pathname === '/api/siwe/verify'
     || pathname === '/api/verify-payment'
-    || pathname === '/api/wallet-paid-status';
+    || pathname === '/api/wallet-paid-status'
+    || pathname === '/api/player-search';
 }
 
 function isSameOriginRequest(req) {
@@ -205,6 +206,27 @@ const server = http.createServer(async (req, res) => {
       }));
     } catch (err) {
       console.error('Wallet status API error:', err.message);
+      res.writeHead(500, apiHeaders);
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    }
+    return;
+  }
+
+  // GET /api/player-search — search saved players by name, wallet, or player id
+  if (urlPath === '/api/player-search' && req.method === 'GET') {
+    if (rejectCrossOrigin(req, res)) return;
+    const query = parsedUrl.searchParams.get('q') || '';
+    const requestedLimit = Number.parseInt(parsedUrl.searchParams.get('limit') || '10', 10);
+    const limit = Number.isFinite(requestedLimit) ? requestedLimit : 10;
+    try {
+      const results = await db.searchPlayers(query, limit);
+      res.writeHead(200, apiHeaders);
+      res.end(JSON.stringify({
+        query,
+        results,
+      }));
+    } catch (err) {
+      console.error('Player search API error:', err.message);
       res.writeHead(500, apiHeaders);
       res.end(JSON.stringify({ error: 'Internal error' }));
     }

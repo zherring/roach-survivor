@@ -282,6 +282,48 @@ const db = {
     return rows[0] || null;
   },
 
+  async searchPlayers(rawQuery, limit = 20) {
+    const query = typeof rawQuery === 'string' ? rawQuery.trim().toLowerCase() : '';
+    const safeLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(50, Math.floor(limit)))
+      : 20;
+    if (query.length < 2) return [];
+
+    const { rows } = await pool.query(
+      `SELECT id, name, banked_balance, wallet_address, paid_account, last_seen, paid_at
+       FROM players
+       WHERE (
+         paid_account = TRUE
+         OR (wallet_address IS NOT NULL AND btrim(wallet_address) <> '')
+         OR banked_balance > 0
+       )
+         AND (
+           lower(name) LIKE '%' || $1 || '%'
+           OR lower(id) LIKE '%' || $1 || '%'
+           OR (
+             wallet_address IS NOT NULL
+             AND lower(wallet_address) LIKE '%' || $1 || '%'
+           )
+         )
+       ORDER BY
+         CASE
+           WHEN lower(id) = $1 THEN 0
+           WHEN lower(name) = $1 THEN 0
+           WHEN wallet_address IS NOT NULL AND lower(wallet_address) = $1 THEN 0
+           WHEN lower(id) LIKE $1 || '%' THEN 1
+           WHEN lower(name) LIKE $1 || '%' THEN 1
+           WHEN wallet_address IS NOT NULL AND lower(wallet_address) LIKE $1 || '%' THEN 1
+           ELSE 2
+         END,
+         paid_account DESC,
+         banked_balance DESC,
+         COALESCE(paid_at, last_seen) DESC
+       LIMIT $2`,
+      [query, safeLimit]
+    );
+    return rows;
+  },
+
   async linkPlatform(playerId, platformType, platformId) {
     await pool.query(
       'UPDATE players SET platform_type = $1, platform_id = $2, last_seen = $3 WHERE id = $4',

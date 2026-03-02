@@ -214,6 +214,9 @@ const lbShareBtn = document.getElementById('lb-share-btn');
 const lbInviteBtn = document.getElementById('lb-invite-btn');
 const lbActionStatusEl = document.getElementById('lb-action-status');
 const lbRankCalloutEl = document.getElementById('lb-rank-callout');
+const lbSearchInput = document.getElementById('lb-search-input');
+const lbSearchStatusEl = document.getElementById('lb-search-status');
+const lbSearchResultsEl = document.getElementById('lb-search-results');
 const accountBtn = document.getElementById('acct-btn');
 const accountModal = document.getElementById('account-modal');
 const accountCloseBtn = document.getElementById('account-close');
@@ -261,6 +264,9 @@ const ENS_LOOKUP_RPC_URL = 'https://ethereum-rpc.publicnode.com';
 let accountWalletAddress = null;
 let accountLinkedIdentity = null;
 let leaderboardRows = [];
+let leaderboardSearchTimer = null;
+let leaderboardSearchRequestId = 0;
+let leaderboardSearchAbortController = null;
 const APP_URL = document.querySelector('meta[name="app-url"]')?.content || window.location.origin;
 const CHALLENGE_PARAM = 'challenge';
 const ensNameCache = new Map(); // lowercased address -> ENS name (or '' if none)
@@ -1636,6 +1642,169 @@ function setLeaderboardActionStatus(text, isError = false) {
   lbActionStatusEl.style.color = isError ? '#f88' : '#9ad';
 }
 
+function setLeaderboardSearchStatus(text, isError = false) {
+  if (!lbSearchStatusEl) return;
+  lbSearchStatusEl.textContent = text || '';
+  lbSearchStatusEl.classList.toggle('error', !!isError);
+}
+
+function getSavedPlayerState(entry) {
+  const banked = Number(entry?.banked_balance || 0);
+  if (entry?.paid_account && banked <= 0) return 'Paid out';
+  if (entry?.paid_account) return 'Paid';
+  if (banked > 0) return 'Banked';
+  if (normalizeAddress(entry?.wallet_address)) return 'Linked';
+  return 'Saved';
+}
+
+function clearLeaderboardSearch({ keepInput = false } = {}) {
+  if (leaderboardSearchTimer) {
+    clearTimeout(leaderboardSearchTimer);
+    leaderboardSearchTimer = null;
+  }
+  if (leaderboardSearchAbortController) {
+    leaderboardSearchAbortController.abort();
+    leaderboardSearchAbortController = null;
+  }
+  leaderboardSearchRequestId++;
+  if (!keepInput && lbSearchInput) lbSearchInput.value = '';
+  if (lbSearchResultsEl) {
+    lbSearchResultsEl.innerHTML = '';
+    lbSearchResultsEl.classList.add('hidden');
+  }
+  setLeaderboardSearchStatus('Search paid players, linked wallets, or player ids.');
+}
+
+function renderLeaderboardSearchResults(results, query) {
+  if (!lbSearchResultsEl) return;
+  lbSearchResultsEl.innerHTML = '';
+
+  const trimmedQuery = typeof query === 'string' ? query.trim() : '';
+  if (!trimmedQuery) {
+    lbSearchResultsEl.classList.add('hidden');
+    setLeaderboardSearchStatus('Search paid players, linked wallets, or player ids.');
+    return;
+  }
+
+  if (!Array.isArray(results) || results.length === 0) {
+    lbSearchResultsEl.classList.add('hidden');
+    setLeaderboardSearchStatus(`No saved players matched "${trimmedQuery}".`, true);
+    return;
+  }
+
+  for (const entry of results) {
+    const item = document.createElement('div');
+    item.className = 'lb-search-item';
+
+    const top = document.createElement('div');
+    top.className = 'lb-search-item-top';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'lb-search-name';
+    nameEl.textContent = entry?.name || shortAddress(entry?.wallet_address) || 'Unknown';
+    nameEl.title = entry?.name || '';
+
+    const stateEl = document.createElement('div');
+    stateEl.className = 'lb-search-state';
+    stateEl.textContent = getSavedPlayerState(entry);
+
+    top.appendChild(nameEl);
+    top.appendChild(stateEl);
+
+    const walletEl = document.createElement('div');
+    walletEl.className = 'lb-search-meta';
+    walletEl.textContent = `Wallet: ${entry?.wallet_address || 'Not linked'}`;
+    walletEl.title = entry?.wallet_address || '';
+
+    const idEl = document.createElement('div');
+    idEl.className = 'lb-search-meta';
+    idEl.textContent = `ID: ${entry?.id || 'Unknown'}`;
+    idEl.title = entry?.id || '';
+
+    const bankedEl = document.createElement('div');
+    bankedEl.className = 'lb-search-meta';
+    bankedEl.textContent = `Banked: ${formatRoachLocale(entry?.banked_balance)} $ROACH`;
+
+    item.appendChild(top);
+    item.appendChild(walletEl);
+    item.appendChild(idEl);
+    item.appendChild(bankedEl);
+    lbSearchResultsEl.appendChild(item);
+  }
+
+  lbSearchResultsEl.classList.remove('hidden');
+  setLeaderboardSearchStatus(`Found ${results.length} matching saved player${results.length === 1 ? '' : 's'}.`);
+}
+
+function queueLeaderboardSearch(rawQuery) {
+  const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+  if (leaderboardSearchTimer) {
+    clearTimeout(leaderboardSearchTimer);
+    leaderboardSearchTimer = null;
+  }
+  if (leaderboardSearchAbortController) {
+    leaderboardSearchAbortController.abort();
+    leaderboardSearchAbortController = null;
+  }
+
+  if (!query) {
+    renderLeaderboardSearchResults([], '');
+    return;
+  }
+  if (query.length < 2) {
+    if (lbSearchResultsEl) {
+      lbSearchResultsEl.innerHTML = '';
+      lbSearchResultsEl.classList.add('hidden');
+    }
+    setLeaderboardSearchStatus('Type at least 2 characters to search.');
+    return;
+  }
+
+  leaderboardSearchTimer = setTimeout(async () => {
+    const requestId = ++leaderboardSearchRequestId;
+    const abortController = new AbortController();
+    leaderboardSearchAbortController = abortController;
+    setLeaderboardSearchStatus('Searching...');
+    try {
+      const params = new URLSearchParams({
+        q: query,
+        limit: '12',
+      });
+      const response = await fetch(`/api/player-search?${params.toString()}`, {
+        signal: abortController.signal,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Search failed');
+      }
+      if (requestId !== leaderboardSearchRequestId) return;
+      renderLeaderboardSearchResults(Array.isArray(payload?.results) ? payload.results : [], query);
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      if (requestId !== leaderboardSearchRequestId) return;
+      if (lbSearchResultsEl) {
+        lbSearchResultsEl.innerHTML = '';
+        lbSearchResultsEl.classList.add('hidden');
+      }
+      setLeaderboardSearchStatus(err?.message || 'Search failed.', true);
+    } finally {
+      if (leaderboardSearchAbortController === abortController) {
+        leaderboardSearchAbortController = null;
+      }
+    }
+  }, 180);
+}
+
+function setLeaderboardModalOpen(isOpen) {
+  if (!lbModal) return;
+  lbModal.classList.toggle('visible', !!isOpen);
+  if (isOpen) {
+    setLeaderboardActionStatus('');
+    return;
+  }
+  clearLeaderboardSearch();
+}
+
 function getMyLeaderboardRank() {
   if (!Array.isArray(leaderboardRows) || !sessionToken) return null;
   for (let i = 0; i < leaderboardRows.length; i++) {
@@ -2562,18 +2731,21 @@ paymentModal?.addEventListener('click', (e) => {
   if (e.target === paymentModal && !paymentInFlight) setPaymentModalOpen(false);
 });
 lbBtn?.addEventListener('click', () => {
-  lbModal?.classList.toggle('visible');
-  setLeaderboardActionStatus('');
+  const nextOpen = !lbModal?.classList.contains('visible');
+  setLeaderboardModalOpen(nextOpen);
 });
-lbCloseBtn?.addEventListener('click', () => lbModal?.classList.remove('visible'));
+lbCloseBtn?.addEventListener('click', () => setLeaderboardModalOpen(false));
 lbShareBtn?.addEventListener('click', () => {
   shareToFarcasterFromLeaderboard();
 });
 lbInviteBtn?.addEventListener('click', () => {
   copyChallengeLink();
 });
+lbSearchInput?.addEventListener('input', (e) => {
+  queueLeaderboardSearch(e.target.value);
+});
 lbModal?.addEventListener('click', (e) => {
-  if (e.target === lbModal) lbModal.classList.remove('visible');
+  if (e.target === lbModal) setLeaderboardModalOpen(false);
 });
 accountBtn?.addEventListener('click', () => setAccountModalOpen(true));
 accountCloseBtn?.addEventListener('click', () => setAccountModalOpen(false));
