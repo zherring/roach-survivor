@@ -216,7 +216,7 @@ Files: new `server/db.js` (~170 lines), modified `server/game-server.js`, `serve
 
 What was built:
 1. **Persistent upgrade model** — added upgrade levels to player schema with backward-compatible migrations and save/load hooks.
-2. **Upgrade catalog + scaling** — centralized defs/cost curves/helpers in shared constants (`bootSize`, `multiStomp`, `rateOfFire`, `goldMagnet`, `wallBounce`, `idleIncome`, `shellArmor`) with high max levels for incremental progression.
+2. **Upgrade catalog + scaling** — centralized defs/cost curves/helpers in shared constants (`bootSize`, `multiStomp`, `rateOfFire`, `goldMagnet`, `wallBounce`, `idleIncome`, `shellArmor`, `autopilot`) with high max levels for incremental progression. Autopilot is a one-time purchase (max level 1) that enables automatic navigation to the Roach Motel.
 3. **Server-side purchase flow** — `buy_upgrade` message validation, max-level checks, affordability checks, and purchase success/failure responses.
 4. **Bank-first spending** — purchases now withdraw from banked balance before wallet balance, with exact source amounts returned to client logs/UI.
 5. **Server enforcement in gameplay** — stomp cooldown uses upgraded rate-of-fire, stomp zones honor boot-size + multi-stomp, wall bounce uses upgrade strength at room edges, and death penalty applies shell armor reduction.
@@ -297,10 +297,9 @@ Files: new `agent/` directory, minor tweak to `server/game-server.js` (agent fla
 | Tier | Count | Price (USDC) |
 |------|-------|-------------|
 | 1 | First 10 | $0.01 |
-| 2 | Next 25 | $0.25 |
-| 3 | Next 100 | $1.00 |
-| 4 | Next 100 | $2.50 |
-| 5 | Everyone after | $5.00 |
+| 2 | Next 10 | $0.25 |
+| 3 | Next 10 | $0.50 |
+| 4 | Everyone after | $1.00 |
 
 `paid_player_count` stored in single-row `payment_config` Postgres table. Operator resets via SQL; curve continues from new count.
 

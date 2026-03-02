@@ -108,6 +108,27 @@
     }
     .shop-open-btn:hover { background: #2b3612; }
 
+    .autopilot-btn {
+      width: 100%;
+      background: #1a0404;
+      border: 1px solid #a00;
+      color: #f44;
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: bold;
+      padding: 7px 8px;
+      cursor: pointer;
+      text-decoration: line-through;
+    }
+    .autopilot-btn:hover { background: #2a0808; }
+    .autopilot-btn.active {
+      background: #041a04;
+      border-color: #0a0;
+      color: #0f0;
+      text-decoration: none;
+    }
+    .autopilot-btn.active:hover { background: #062a06; }
+
     /* ==================== UPGRADE SHOP ==================== */
     #upgrade-shop {
       background: #0a0a0a;
@@ -582,7 +603,8 @@
       }
       #mobile-heal-btn,
       #mobile-save-btn,
-      #mobile-open-shop-btn {
+      #mobile-open-shop-btn,
+      #mobile-autopilot-btn {
         display: flex;
         flex: 1 1 0;
         width: auto;
@@ -616,6 +638,22 @@
         background: #1b2209;
         border: 1px solid #8a7b2d;
         color: #f0d878;
+      }
+      #mobile-autopilot-btn {
+        background: #1a0404;
+        border: 1px solid #a00;
+        color: #f44;
+        flex: 0 0 auto;
+        width: auto;
+        min-width: 50px;
+        padding: 10px 8px;
+        text-decoration: line-through;
+      }
+      #mobile-autopilot-btn.active {
+        background: #041a04;
+        border-color: #0a0;
+        color: #0f0;
+        text-decoration: none;
       }
       .saved-badge {
         border: 1px solid #8a7b2d;
@@ -1675,6 +1713,7 @@
         <div class="stat">Room: <span id="current-room">1,1</span></div>
       </div>
       <button id="save-game-btn" class="save-game-btn">SAVE GAME<span class="price-tag" id="save-price">Loading...</span></button>
+      <button id="autopilot-btn" class="autopilot-btn hidden">AUTOPILOT: OFF</button>
       <button id="open-shop-btn" class="shop-open-btn hidden">Open Store</button>
 
       <canvas id="minimap-canvas" width="165" height="165"></canvas>
@@ -1726,6 +1765,7 @@
         <button id="mobile-heal-btn">HEAL 10</button>
         <button id="mobile-save-btn">SAVE</button>
         <button id="mobile-open-shop-btn" class="hidden">STORE</button>
+        <button id="mobile-autopilot-btn" class="hidden">AUTO</button>
       </div>
       <div id="mobile-save-nudge">yer roach is gettin fat... save it!</div>
 
@@ -1822,6 +1862,13 @@
                 <span class="upgrade-level" id="level-shellArmor">Lv 0/90</span>
               </div>
               <button class="upgrade-btn" id="upgrade-btn-shellArmor">Buy</button>
+            </div>
+            <div class="upgrade-item" data-upgrade="autopilot">
+              <div class="upgrade-meta">
+                <span class="upgrade-name">Autopilot</span>
+                <span class="upgrade-level" id="level-autopilot">Lv 0/1</span>
+              </div>
+              <button class="upgrade-btn" id="upgrade-btn-autopilot">Buy</button>
             </div>
           </div>
         </div>

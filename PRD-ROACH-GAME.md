@@ -192,10 +192,9 @@ A skill-based multiplayer game where players control roaches, stomp other roache
 | Players | Price (USDC) |
 |---------|-------------|
 | First 10 | $0.01 |
-| Next 25 | $0.25 |
-| Next 100 | $1.00 |
-| Next 100 | $2.50 |
-| Everyone after | $5.00 |
+| Next 10 | $0.25 |
+| Next 10 | $0.50 |
+| Everyone after | $1.00 |
 
 - `paid_player_count` is manually resettable by operator (SQL update)
 - After reset, curve restarts from tier 1 at current count
@@ -291,7 +290,7 @@ A skill-based multiplayer game where players control roaches, stomp other roache
 
 ## Open Questions / TBD
 
-1. ~~**Mint price scaling**~~ - RESOLVED: 5-tier curve from $0.01 to $5.00
+1. ~~**Mint price scaling**~~ - RESOLVED: 4-tier curve from $0.01 to $1.00
 2. **Withdrawal timelock duration** - deferred (manual payouts for now)
 3. **Survival income rate** - how much $ROACH per second/minute alive?
 4. **Upgrade costs** - pricing for permanent upgrades

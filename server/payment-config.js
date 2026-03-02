@@ -16,10 +16,9 @@ export const PAYMENT_RECIPIENT_ADDRESS = normalizeAddress(recipientRaw);
 
 export const PRICING_TIERS = Object.freeze([
   { threshold: 10, price: 0.01 },
-  { threshold: 35, price: 0.25 },
-  { threshold: 135, price: 1.0 },
-  { threshold: 235, price: 2.5 },
-  { threshold: Infinity, price: 5.0 },
+  { threshold: 20, price: 0.25 },
+  { threshold: 30, price: 0.50 },
+  { threshold: Infinity, price: 1.00 },
 ]);
 
 export function normalizeAddress(value) {

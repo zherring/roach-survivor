@@ -172,6 +172,7 @@ export class GameServer {
           wallBounce: existing.wall_bounce_level,
           idleIncome: existing.idle_income_level,
           shellArmor: existing.shell_armor_level,
+          autopilot: existing.autopilot_level,
         });
         session = await db.getSession(token);
         roomKey = session ? session.room : '1,1';
@@ -380,7 +381,16 @@ export class GameServer {
           break;
         }
 
-        const cost = getUpgradeCost(upgradeKey, currentLevel);
+        let cost = getUpgradeCost(upgradeKey, currentLevel);
+        if (upgradeKey === 'autopilot' && player.walletAddress) {
+          const discountWallets = [
+            '0x8654d1005d314e7ff242cbc62a68e8d098d979a6',
+            '0xb48e8da63c2afc5633702b7acf4bde830c1de48b',
+          ];
+          if (discountWallets.includes(player.walletAddress.toLowerCase())) {
+            cost = 1;
+          }
+        }
         const availableFunds = player.bankedBalance + player.roach.balance;
         if (availableFunds < cost) {
           this.send(player.ws, {

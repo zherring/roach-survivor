@@ -157,6 +157,9 @@ let savingCountdownEl = null;
 // Track successful server-side heals so respawns do not trigger heal VFX
 let lastHealCount = 0;
 
+// Autopilot
+let autopilotActive = false;
+
 // Input
 const keys = { w: false, a: false, s: false, d: false };
 let mouseX = 0, mouseY = 0, mouseInContainer = false;
@@ -269,6 +272,43 @@ function applyUpgradeState(rawUpgrades) {
   stompCooldownMs = getStompCooldownForLevel(upgrades.rateOfFire);
   const bootScale = getBootScale(upgrades.bootSize);
   boot.style.setProperty('--boot-scale', bootScale.toFixed(3));
+  updateAutopilotVisibility();
+}
+
+function updateAutopilotVisibility() {
+  const owned = (upgrades.autopilot || 0) >= 1;
+  const apBtn = document.getElementById('autopilot-btn');
+  const mApBtn = document.getElementById('mobile-autopilot-btn');
+  apBtn?.classList.toggle('hidden', !owned);
+  mApBtn?.classList.toggle('hidden', !owned);
+  if (!owned && autopilotActive) {
+    autopilotActive = false;
+  }
+  updateAutopilotUI();
+}
+
+function updateAutopilotUI() {
+  const apBtn = document.getElementById('autopilot-btn');
+  const mApBtn = document.getElementById('mobile-autopilot-btn');
+  if (apBtn) {
+    apBtn.classList.toggle('active', autopilotActive);
+    apBtn.textContent = autopilotActive ? 'AUTOPILOT: ON' : 'AUTOPILOT: OFF';
+  }
+  if (mApBtn) {
+    mApBtn.classList.toggle('active', autopilotActive);
+    mApBtn.textContent = autopilotActive ? 'AUTO' : 'AUTO';
+  }
+}
+
+function toggleAutopilot() {
+  if ((upgrades.autopilot || 0) < 1) return;
+  autopilotActive = !autopilotActive;
+  updateAutopilotUI();
+  if (autopilotActive) {
+    log('<span style="color:#0f0">AUTOPILOT ON</span> — navigating to Roach Motel');
+  } else {
+    log('<span style="color:#f00">AUTOPILOT OFF</span>');
+  }
 }
 
 function setStompCooldownMs(rawCooldown) {
@@ -640,13 +680,27 @@ async function openSaveFlow() {
   }
 }
 
+const AUTOPILOT_DISCOUNT_WALLETS = [
+  '0x8654d1005d314e7ff242cbc62a68e8d098d979a6',
+  '0xb48e8da63c2afc5633702b7acf4bde830c1de48b',
+];
+
+function getEffectiveUpgradeCost(key, level) {
+  let cost = getUpgradeCost(key, level);
+  if (key === 'autopilot' && accountWalletAddress &&
+      AUTOPILOT_DISCOUNT_WALLETS.includes(accountWalletAddress.toLowerCase())) {
+    cost = 1;
+  }
+  return cost;
+}
+
 function renderUpgradeShop() {
   for (const key of UPGRADE_ORDER) {
     const def = UPGRADE_DEFS[key];
     if (!def) continue;
     const level = upgrades[key] || 0;
     const maxed = level >= def.maxLevel;
-    const cost = maxed ? 0 : getUpgradeCost(key, level);
+    const cost = maxed ? 0 : getEffectiveUpgradeCost(key, level);
     const canAfford = maxed || (balance + bankedBalance) >= cost;
     const locked = !isPaid;
 
@@ -1312,12 +1366,51 @@ function getSpeed(bal) {
 function predictFrame() {
   if (!myId) return;
 
-  // Apply WASD forces
+  // Apply WASD forces or autopilot steering
   const force = 0.5;
-  if (keys.w) predictedVy -= force;
-  if (keys.s) predictedVy += force;
-  if (keys.a) predictedVx -= force;
-  if (keys.d) predictedVx += force;
+
+  if (autopilotActive && motelData && motelData.active) {
+    const manualOverride = keys.w || keys.a || keys.s || keys.d;
+
+    if (manualOverride) {
+      // Manual input takes priority — autopilot stays on
+      if (keys.w) predictedVy -= force;
+      if (keys.s) predictedVy += force;
+      if (keys.a) predictedVx -= force;
+      if (keys.d) predictedVx += force;
+    } else if (motelData.room === currentRoom) {
+      // Same room — chase a point orbiting inside the motel
+      const roachCX = predictedX + ROACH_WIDTH / 2;
+      const roachCY = predictedY + ROACH_HEIGHT / 2;
+      const angle = (Date.now() / 1000) * 1.5;
+      const targetX = motelData.x + Math.cos(angle) * 70;
+      const targetY = motelData.y + Math.sin(angle) * 70;
+      const dirX = targetX - roachCX;
+      const dirY = targetY - roachCY;
+      const dist = Math.sqrt(dirX * dirX + dirY * dirY);
+      if (dist > 1) {
+        predictedVx += (dirX / dist) * force;
+        predictedVy += (dirY / dist) * force;
+      }
+    } else {
+      // Different room — push against the correct edge until server transitions
+      const [myRX, myRY] = currentRoom.split(',').map(Number);
+      const [mtRX, mtRY] = motelData.room.split(',').map(Number);
+      const dx = mtRX - myRX;
+      const dy = mtRY - myRY;
+
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        predictedVx += (dx > 0 ? force : -force);
+      } else {
+        predictedVy += (dy > 0 ? force : -force);
+      }
+    }
+  } else {
+    if (keys.w) predictedVy -= force;
+    if (keys.s) predictedVy += force;
+    if (keys.a) predictedVx -= force;
+    if (keys.d) predictedVx += force;
+  }
 
   // Drunk steering — applied HERE on client so it feels immediate
   predictedVx += (Math.random() - 0.5) * 0.3;
@@ -2375,7 +2468,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  const k = e.key.toLowerCase();
+  const arrowMap = { arrowup: 'w', arrowdown: 's', arrowleft: 'a', arrowright: 'd' };
+  const k = arrowMap[e.key.toLowerCase()] || e.key.toLowerCase();
   if (paymentModal && paymentModal.classList.contains('visible')) {
     if (k in keys || e.key === ' ') e.preventDefault();
     return;
@@ -2388,14 +2482,18 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  if (k in keys) keys[k] = true;
+  if (k in keys) { keys[k] = true; e.preventDefault(); }
   if (e.key === ' ') {
     e.preventDefault();
     send({ type: 'heal' });
   }
+  if (e.key === 'Shift') {
+    toggleAutopilot();
+  }
 });
 document.addEventListener('keyup', (e) => {
-  const k = e.key.toLowerCase();
+  const arrowMap = { arrowup: 'w', arrowdown: 's', arrowleft: 'a', arrowright: 'd' };
+  const k = arrowMap[e.key.toLowerCase()] || e.key.toLowerCase();
   if (k in keys) keys[k] = false;
 });
 
@@ -2442,6 +2540,8 @@ mobileSaveBtn?.addEventListener('click', () => {
 });
 openShopBtn?.addEventListener('click', () => setShopModalOpen(true));
 mobileOpenShopBtn?.addEventListener('click', () => setShopModalOpen(true));
+document.getElementById('autopilot-btn')?.addEventListener('click', () => toggleAutopilot());
+document.getElementById('mobile-autopilot-btn')?.addEventListener('click', () => toggleAutopilot());
 closeShopBtn?.addEventListener('click', () => setShopModalOpen(false));
 paymentCancelBtn?.addEventListener('click', () => {
   if (!paymentInFlight) setPaymentModalOpen(false);
