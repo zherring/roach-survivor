@@ -8,13 +8,27 @@ export const SIWE_SESSION_COOKIE_NAME = 'roach_siwe_sid';
 
 const challenges = new Map();
 
+function sanitizeHostHeader(value) {
+  const host = String(value || '').trim().toLowerCase();
+  if (!host) return '';
+  if (!/^[a-z0-9.-]+(?::\d{1,5})?$/.test(host)) return '';
+  return host;
+}
+
 export function getRequestOrigin(req) {
-  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
-  const host = forwardedHost || String(req.headers.host || '').trim();
-  const protocol = forwardedProto || (req.socket?.encrypted ? 'https' : 'http');
+  const trustProxy = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const forwardedHost = sanitizeHostHeader(String(req.headers['x-forwarded-host'] || '').split(',')[0]);
+  const directHost = sanitizeHostHeader(req.headers.host);
+  const host = trustProxy ? (forwardedHost || directHost) : directHost;
+
+  const directProtocol = req.socket?.encrypted ? 'https' : 'http';
+  const protocol = trustProxy && (forwardedProto === 'https' || forwardedProto === 'http')
+    ? forwardedProto
+    : directProtocol;
+
   return {
-    domain: host,
+    domain: host || 'localhost',
     uri: host ? `${protocol}://${host}` : `${protocol}://localhost`,
   };
 }
