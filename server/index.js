@@ -668,12 +668,15 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
 });
 
-// Initialize DB, then start
+// Start listening immediately so Railway's health check doesn't SIGTERM us,
+// then initialize DB and game loop.
+server.listen(PORT, () => {
+  console.log(`$ROACH server listening on http://localhost:${PORT}`);
+});
+
 (async () => {
   await initDB();
   await gameServer.init();
   gameServer.start();
-  server.listen(PORT, () => {
-    console.log(`$ROACH server running on http://localhost:${PORT}`);
-  });
+  console.log('$ROACH game server ready');
 })();
